@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Record toolchain
         run: |
@@ -26,7 +26,7 @@ jobs:
       - name: Test FramebaseKit
         run: swift test --package-path Packages/FramebaseKit
 
-      - name: Build Framebase app
+      - name: Build Framebase app and UI-test target
         run: |
           xcodebuild \
             -project Framebase.xcodeproj \
@@ -35,4 +35,17 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            build-for-testing
+
+      - name: Smoke-launch Framebase
+        run: |
+          open -n DerivedData/Build/Products/Debug/Framebase.app
+          for attempt in {1..10}; do
+            if pgrep -x Framebase >/dev/null; then
+              pkill -x Framebase
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Framebase did not remain running after launch" >&2
+          exit 1
