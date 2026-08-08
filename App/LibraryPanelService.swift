@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 @MainActor
 enum LibraryPanelService {
@@ -20,5 +21,20 @@ enum LibraryPanelService {
         }
 
         return selectedURL
+    }
+
+    static func chooseImagesForImport() -> [URL] {
+        let panel = NSOpenPanel()
+        panel.title = "Import Images"
+        panel.message = "Choose still images to copy into your Framebase library."
+        panel.prompt = "Import"
+        panel.allowedContentTypes = [.image]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.resolvesAliases = true
+
+        guard panel.runModal() == .OK else { return [] }
+        return panel.urls
     }
 }

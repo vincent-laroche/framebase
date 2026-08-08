@@ -41,6 +41,13 @@ struct LibraryWindowView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 320)
         } detail: {
             FoundationAssetBrowser(model: model)
+                .dropDestination(for: URL.self) { urls, _ in
+                    guard model.container.canBrowseLibrary, !urls.isEmpty else { return false }
+                    Task {
+                        await model.importAssets(from: urls)
+                    }
+                    return true
+                }
                 .inspector(isPresented: inspectorBinding) {
                     FoundationInspector(model: model)
                         .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
@@ -102,6 +109,18 @@ struct LibraryWindowView: View {
         }
         .onChange(of: model.expandedFolderIDs) {
             persistExpansionState()
+        }
+        .onChange(of: model.importRequestGeneration) {
+            let urls = LibraryPanelService.chooseImagesForImport()
+            guard !urls.isEmpty else { return }
+            Task {
+                await model.importAssets(from: urls)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if model.isImporting, let progress = model.importProgress {
+                importProgressView(progress)
+            }
         }
         .confirmationDialog(
             "Delete Folder?",
@@ -296,5 +315,28 @@ struct LibraryWindowView: View {
             : "this folder and \(prompt.folderCount - 1) subfolder(s)"
         let assetDescription = prompt.assetCount == 1 ? "1 asset" : "\(prompt.assetCount) assets"
         return "Delete \(folderDescription) beginning with “\(prompt.folderName)”? \(assetDescription) will move to Inbox. Original files will not be deleted."
+    }
+
+    private func importProgressView(_ progress: ImportProgress) -> some View {
+        HStack(spacing: 12) {
+            ProgressView(
+                value: Double(progress.completedCount),
+                total: Double(max(progress.totalCount, 1))
+            )
+            .frame(maxWidth: 280)
+
+            Text(progress.currentFilename ?? "Importing images…")
+                .lineLimit(1)
+            Text("\(progress.completedCount) of \(progress.totalCount)")
+                .foregroundStyle(.secondary)
+
+            Button("Cancel") {
+                Task { await model.cancelImport() }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+        .accessibilityIdentifier("import.progress")
     }
 }

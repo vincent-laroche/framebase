@@ -31,6 +31,13 @@ private enum FolderHistoryError: LocalizedError {
     }
 }
 
+enum AssetThumbnailState: Sendable {
+    case loading
+    case ready(ThumbnailPayload)
+    case missing
+    case corrupt
+}
+
 enum NavigationTarget: Hashable, Sendable {
     case allAssets
     case inbox
@@ -67,12 +74,16 @@ final class LibraryWindowModel {
     var navigationTarget: NavigationTarget = .allAssets {
         didSet {
             assetQuery = AssetQuery(scope: navigationTarget.assetScope)
-            cancelQueryWork()
+            restartAssetObservation()
         }
     }
     var assetQuery = AssetQuery(scope: .allAssets)
-    var assetSort = AssetSort.defaultSort
+    var assetSort = AssetSort.defaultSort {
+        didSet { restartAssetObservation() }
+    }
     var orderedVisibleAssetIDs: [AssetID] = []
+    var assetGridRecords: [AssetGridRecord] = []
+    var thumbnailStates: [AssetID: AssetThumbnailState] = [:]
     var selectedAssetIDs: Set<AssetID> = []
     var selectionAnchorID: AssetID?
     var keyboardFocusedAssetID: AssetID?
@@ -83,9 +94,15 @@ final class LibraryWindowModel {
     var albums: [Album] = []
     var pendingFolderDeletion: FolderDeletionPrompt?
     var isInspectorVisible = true
-    var thumbnailSize: Double = 176
+    var thumbnailSize: Double = 176 {
+        didSet {
+            guard thumbnailSize != oldValue else { return }
+            cancelThumbnailWork(clearStates: true)
+        }
+    }
     var importRequestGeneration = 0
     var isImporting = false
+    var importProgress: ImportProgress?
     var statusMessage: String?
 
     private var undoHistory: [FolderHistoryEntry] = []
@@ -99,6 +116,7 @@ final class LibraryWindowModel {
 
     @ObservationIgnored private var observationTask: Task<Void, Never>?
     @ObservationIgnored private var thumbnailPrefetchTask: Task<Void, Never>?
+    @ObservationIgnored private var thumbnailTasks: [AssetID: (ThumbnailRequestID, Task<Void, Never>)] = [:]
     @ObservationIgnored private var folderObservationTask: Task<Void, Never>?
     @ObservationIgnored private var albumObservationTask: Task<Void, Never>?
 
@@ -109,12 +127,53 @@ final class LibraryWindowModel {
     deinit {
         observationTask?.cancel()
         thumbnailPrefetchTask?.cancel()
+        for (_, entry) in thumbnailTasks { entry.1.cancel() }
         folderObservationTask?.cancel()
         albumObservationTask?.cancel()
     }
 
     func requestImport() {
         importRequestGeneration &+= 1
+    }
+
+    func importAssets(from sourceURLs: [URL]) async {
+        guard !sourceURLs.isEmpty,
+              !isImporting,
+              let coordinator = container.importCoordinator,
+              let destinationFolderID = importDestinationFolderID else {
+            return
+        }
+
+        isImporting = true
+        importProgress = ImportProgress(completedCount: 0, totalCount: sourceURLs.count, currentFilename: nil)
+        defer {
+            isImporting = false
+            importProgress = nil
+        }
+
+        do {
+            let result = try await coordinator.importAssets(
+                ImportRequest(sourceURLs: sourceURLs, destinationFolderID: destinationFolderID)
+            ) { [weak self] progress in
+                await self?.applyImportProgress(progress)
+            }
+
+            if result.cancelled {
+                statusMessage = "Import cancelled. No new assets were added."
+            } else if !result.failures.isEmpty {
+                let importedCount = result.importedAssetIDs.count
+                let failureCount = result.failures.count
+                let firstReason = result.failures.first?.reason ?? "Unknown error"
+                statusMessage = "Imported \(importedCount) image(s). \(failureCount) file(s) were skipped. \(firstReason)"
+            }
+            try await refreshVisibleAssetIDs()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func cancelImport() async {
+        await container.importCoordinator?.cancelCurrentImport()
     }
 
     func undoLastAction() async {
@@ -156,9 +215,53 @@ final class LibraryWindowModel {
 
     func cancelQueryWork() {
         observationTask?.cancel()
-        thumbnailPrefetchTask?.cancel()
         observationTask = nil
-        thumbnailPrefetchTask = nil
+        cancelThumbnailWork(clearStates: true)
+    }
+
+    func requestThumbnail(for record: AssetGridRecord, displayScale: Double) {
+        guard thumbnailStates[record.id] == nil,
+              thumbnailTasks[record.id] == nil,
+              let provider = container.thumbnailProvider else { return }
+
+        let request = ThumbnailRequest(
+            storageKey: record.storageKey,
+            fingerprint: AssetFingerprint(
+                assetID: record.id,
+                fileSize: record.fileSize,
+                modifiedAtMilliseconds: Int64(record.modifiedAt.timeIntervalSince1970 * 1_000)
+            ),
+            target: ThumbnailTarget(
+                width: max(1, Int(thumbnailSize.rounded())),
+                height: max(1, Int(thumbnailSize.rounded())),
+                displayScale: max(1, displayScale)
+            )
+        )
+        thumbnailStates[record.id] = .loading
+        let task = Task { [weak self] in
+            do {
+                let payload = try await provider.thumbnail(for: request)
+                guard let self, !Task.isCancelled else { return }
+                thumbnailStates[record.id] = .ready(payload)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self else { return }
+                let originalAvailable = await container.assetBlobStore?.validate(record.storageKey) ?? false
+                thumbnailStates[record.id] = originalAvailable ? .corrupt : .missing
+            }
+            self?.thumbnailTasks.removeValue(forKey: record.id)
+        }
+        thumbnailTasks[record.id] = (request.id, task)
+    }
+
+    func cancelThumbnail(for assetID: AssetID) {
+        guard let entry = thumbnailTasks.removeValue(forKey: assetID) else { return }
+        entry.1.cancel()
+        Task { await container.thumbnailProvider?.cancel(requestID: entry.0) }
+        if case .loading = thumbnailStates[assetID] {
+            thumbnailStates.removeValue(forKey: assetID)
+        }
     }
 
     func libraryStateDidChange() {
@@ -174,6 +277,8 @@ final class LibraryWindowModel {
             albums = []
             return
         }
+
+        restartAssetObservation()
 
         folderObservationTask = Task { [weak self] in
             do {
@@ -322,6 +427,76 @@ final class LibraryWindowModel {
         expandedFolderIDs.formIntersection(validIDs)
         if case let .folder(selectedID) = navigationTarget, !validIDs.contains(selectedID) {
             navigationTarget = .inbox
+        }
+    }
+
+    private var importDestinationFolderID: FolderID? {
+        if case let .folder(folderID) = navigationTarget {
+            return folderID
+        }
+        return folderTreeSnapshot?.inboxID ?? container.catalogDatabase?.inboxID
+    }
+
+    private func applyImportProgress(_ progress: ImportProgress) {
+        importProgress = progress
+    }
+
+    private func restartAssetObservation() {
+        observationTask?.cancel()
+        observationTask = nil
+        cancelThumbnailWork(clearStates: true)
+
+        guard case .ready = container.libraryState,
+              let repository = container.assetRepository else {
+            orderedVisibleAssetIDs = []
+            return
+        }
+
+        let query = assetQuery
+        let sort = assetSort
+        observationTask = Task { [weak self] in
+            do {
+                for try await _ in repository.observe(matching: query) {
+                    guard let self, !Task.isCancelled,
+                          query == assetQuery,
+                          sort == assetSort else { return }
+                    try await loadAssetState(repository: repository, query: query, sort: sort)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.statusMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func refreshVisibleAssetIDs() async throws {
+        guard let repository = container.assetRepository else { return }
+        try await loadAssetState(repository: repository, query: assetQuery, sort: assetSort)
+    }
+
+    private func loadAssetState(
+        repository: any AssetRepository,
+        query: AssetQuery,
+        sort: AssetSort
+    ) async throws {
+        async let ids = repository.orderedIDs(matching: query, sortedBy: sort)
+        async let page = repository.page(matching: query, sortedBy: sort, offset: 0, limit: 200)
+        orderedVisibleAssetIDs = try await ids
+        assetGridRecords = try await page.records
+        selectedAssetIDs.formIntersection(orderedVisibleAssetIDs)
+    }
+
+    private func cancelThumbnailWork(clearStates: Bool) {
+        thumbnailPrefetchTask?.cancel()
+        thumbnailPrefetchTask = nil
+        for (_, entry) in thumbnailTasks {
+            entry.1.cancel()
+            Task { await container.thumbnailProvider?.cancel(requestID: entry.0) }
+        }
+        thumbnailTasks.removeAll()
+        if clearStates {
+            thumbnailStates.removeAll()
         }
     }
 

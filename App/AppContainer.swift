@@ -25,6 +25,8 @@ final class AppContainer {
     @ObservationIgnored private(set) var folderRepository: (any FolderRepository)?
     @ObservationIgnored private(set) var albumRepository: (any AlbumRepository)?
     @ObservationIgnored private(set) var assetBlobStore: (any AssetBlobStore)?
+    @ObservationIgnored private(set) var importCoordinator: (any ImportCoordinator)?
+    @ObservationIgnored private(set) var thumbnailProvider: (any ThumbnailProvider)?
 
     let catalogSchemaVersion = FramebaseCatalogFoundation.initialSchemaVersion
     let thumbnailCacheFormatVersion = FramebaseMediaFoundation.thumbnailCacheFormatVersion
@@ -121,10 +123,33 @@ final class AppContainer {
         folderRepository = catalog.folders
         albumRepository = catalog.albums
         assetBlobStore = blobStore
+        importCoordinator = ManagedImportCoordinator(
+            blobStore: blobStore,
+            metadataExtractor: ImageIOMetadataExtractor(),
+            insertIntoCatalog: { assets in
+                try await catalog.insertAssets(assets)
+            }
+        )
+        thumbnailProvider = try ImageIOThumbnailProvider(
+            blobStore: blobStore,
+            cacheDirectoryURL: try Self.thumbnailCacheDirectoryURL()
+        )
         libraryRootURL = layout.rootURL
         if persistSelection {
             preferences.set(layout.rootURL.path, forKey: Self.libraryRootPreferenceKey)
         }
         libraryState = .ready(catalog.catalogID)
+    }
+
+    private static func thumbnailCacheDirectoryURL() throws -> URL {
+        guard let cachesURL = FileManager.default.urls(
+            for: .cachesDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return cachesURL
+            .appendingPathComponent("com.vincentlaroche.framebase", isDirectory: true)
+            .appendingPathComponent("Thumbnails", isDirectory: true)
     }
 }
