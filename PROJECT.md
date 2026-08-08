@@ -28,13 +28,15 @@ The repository now contains:
 
 - Xcode 26.6 build 17F113 is installed and selected at `/Applications/Xcode.app/Contents/Developer`.
 - `xcodebuild -license check` and `xcodebuild -checkFirstLaunchStatus` pass.
-- `swift test --package-path Packages/FramebaseKit` passes 31 tests in 6 suites.
+- `swift test --package-path Packages/FramebaseKit` passes 32 tests in 6 suites.
 - `xcodebuild ... test -only-testing:FramebaseUITests` passes the full UI suite, including the create/rename/delete/undo/redo folder workflow.
 - `./script/build_and_run.sh --verify` builds, launches, and confirms the app remains running.
 - The release-mode 100,000-asset acceptance test passes in 2.404 seconds total including fixture creation; both the first 200-record page and full sorted-ID query stay below their two-second gates.
 - Source audit finds no networking, Cloudflare, authentication, OCR, video, or permanent-deletion implementation in the app/package sources.
 - GitHub Actions run `31253440128` passes package tests, the app/UI-test-target build, and the app smoke launch for commit `e0f3e9a`.
 - `git diff --check` passes.
+- A real 1,602-asset library at `~/Pictures/Framebase Library.framebase` opens, browses, and decodes thumbnails: the process settles at 0% CPU, the thumbnail disk cache fills, and no crash report is produced.
+- The UI suite now includes an import that renders real collection-view cells, so the dequeue and configure path is covered rather than only folder operations on an empty library.
 
 ## Active blocker
 
@@ -42,11 +44,20 @@ None for Phase 1. Phase 2 has not started and no Framebase Cloudflare resources 
 
 ## Next
 
-1. Create `docs/phases/PHASE_2_CLOUD_FOUNDATION.md` from the master roadmap.
-2. Perform a read-only Cloudflare inventory using the required operating skill; do not create or deploy resources during inventory.
-3. Lock the Phase 2 threat model, device authentication, D1 schema, blob key model, change protocol, API contract, resource isolation, rollback, observability, and cost controls.
-4. Request explicit approval before creating any Framebase development cloud resources.
-5. Preserve the working local library throughout every cloud migration step.
+Phase 1 follow-ups, before Phase 2 starts:
+
+1. Exercise the remaining browser surfaces by hand against the real library: sidebar navigation, multi-select, drag between folders, inspector metadata, favourites and ratings, sorting, and settings. Only the grid and thumbnail path have been checked with real content.
+2. Decide whether recursive folder-tree import becomes a real app feature. Bulk ingest currently exists only as the `framebase-import` development CLI, and the in-app import is flat.
+3. Close the coverage gap around browser churn. The new UI test covers cell dequeue and display, but nothing catches a cell-lifecycle feedback loop, which needs either a churn counter in the browser or a large-library performance test.
+4. Add only narrowly justified polish or diagnostics based on that real-use pass.
+
+Phase 2 cloud foundation:
+
+5. Create `docs/phases/PHASE_2_CLOUD_FOUNDATION.md` from the master roadmap.
+6. Perform a read-only Cloudflare inventory using the required operating skill; do not create or deploy resources during inventory.
+7. Lock the Phase 2 threat model, device authentication, D1 schema, blob key model, change protocol, API contract, resource isolation, rollback, observability, and cost controls.
+8. Request explicit approval before creating any Framebase development cloud resources.
+9. Preserve the working local library throughout every cloud migration step.
 
 ## Session log
 
@@ -59,3 +70,4 @@ None for Phase 1. Phase 2 has not started and no Framebase Cloudflare resources 
 - 2026-08-08 — Codex primary agent — Closed the Milestone 5 finish gate with chunked large-selection catalog mutations, bounded inspector detail loading, unified import/catalog/thumbnail logging and signposts, a release-mode 100,000-asset acceptance test, full package/UI/build/launch verification, and a deferred-scope source audit. Framebase is ready for regular local use under the implementation plan; no distribution, sandboxing, signing, notarization, cloud, or sync readiness is claimed.
 - 2026-08-08 — Codex primary agent — Corrected the product-level completion status after reviewing the complete original Framebase conversation. Added `docs/MASTER_ROADMAP.md` covering the cloud-backed library, offline sync, richer organization/search, File Provider, OCR/AI, workflows, OpenAPI/CLI/MCP, safety, operations, and phase exit gates. Phase 1 remains complete locally; Framebase overall is not complete, and Phase 2 cloud foundation is next.
 - 2026-08-08 — Codex primary agent — Consolidated the local Git layout after the `01_projects` cleanup. Kept `/Users/vMac/01_projects/private_apps_and_products/framebase` as the sole canonical checkout, verified the obsolete `codex-availability-issue` worktree was clean and fully merged into `main`, retired its Git metadata and local branch, and moved the former `framebase_worktrees` directory to macOS Trash for recoverability. Removed Finder metadata that had created an invalid Git ref, rebuilt path-bound Swift/Xcode caches from zero, passed 31 package tests, and passed `./script/build_and_run.sh --verify` from the canonical path. Existing uncommitted roadmap and agent-configuration work was preserved without committing or pushing.
+- 2026-08-08 — Claude primary agent — Loaded four real Cloudinary export folders (1,602 of 1,605 files; the 3 rejects are `.mp4`, correctly out of scope) into `~/Pictures/Framebase Library.framebase` with a new development-only `framebase-import` CLI that mirrors a source tree as logical folders. Real content exposed three browser defects that the previous gates could not see. First, import validation decoded thumbnails at `kCGImageSourceThumbnailMaxPixelSize: 1`, which ImageIO refuses for some valid iPhone JPEGs, rejecting 20 real photographs; validation now decodes at 32. Second, `NSCollectionView` item-class registration ran before the layout was assigned, and assigning a layout discards registrations, so the first dequeued cell raised a missing-nib exception and killed the process; registration moved into `loadView` after the layout. Third, and the reason no thumbnail had ever appeared, `apply` reloaded visible items on every observed change, which re-fired `didEndDisplaying`/`willDisplay`, and the cancel path cleared the in-flight `.loading` state, so requests were cancelled and restarted forever: the browser held 100% CPU, emitted ~108,000 `willDisplay` calls in 20 seconds, and finished zero decodes. Visible cells are now reconfigured in place, layout is invalidated only when item size actually changes, and `requestThumbnail` publishes its observed state off the layout pass so AppKit no longer raises from `_postWindowNeedsUpdateConstraints`. Verification: 32 package tests, all 4 UI tests including a new imported-asset cell-render test, `./script/build_and_run.sh --verify`, and `git diff --check`; the real library now settles at 0% CPU with the thumbnail cache filling and no new crash reports. Known gap: the new UI test does not reproduce the feedback loop, because fixture images decode faster than the loop can starve them. Next: hand-exercise the remaining browser surfaces, and decide whether recursive folder-tree import becomes a real feature.

@@ -85,14 +85,14 @@ private struct NativeAssetCollection: NSViewControllerRepresentable {
 
     func makeNSViewController(context: Context) -> AssetCollectionViewController {
         let controller = AssetCollectionViewController()
+        // The controller registers the item class immediately after assigning
+        // its layout, and assigning a layout discards earlier registrations.
+        // Loading the view here keeps that ordering deterministic.
+        controller.loadViewIfNeeded()
         let collectionView = controller.collectionView
         collectionView.dataSource = context.coordinator
         collectionView.delegate = context.coordinator
         collectionView.prefetchDataSource = context.coordinator
-        collectionView.register(
-            AssetCollectionItem.self,
-            forItemWithIdentifier: .assetCollectionItem
-        )
         collectionView.registerForDraggedTypes([.framebaseAssets])
         collectionView.setDraggingSourceOperationMask(.move, forLocal: true)
         context.coordinator.collectionView = collectionView
@@ -127,18 +127,43 @@ private struct NativeAssetCollection: NSViewControllerRepresentable {
             guard let collectionView else { return }
             if let layout = collectionView.collectionViewLayout as? NSCollectionViewFlowLayout {
                 let size = max(72, parent.thumbnailSize)
-                layout.itemSize = NSSize(width: size, height: size + 28)
-                layout.invalidateLayout()
+                let itemSize = NSSize(width: size, height: size + 28)
+                // Invalidating on every update re-runs layout for unchanged
+                // geometry, which is pure churn on a thumbnail-state update.
+                if layout.itemSize != itemSize {
+                    layout.itemSize = itemSize
+                    layout.invalidateLayout()
+                }
             }
             if reloadAll {
                 collectionView.reloadData()
             } else {
-                let visible = Set(collectionView.indexPathsForVisibleItems())
-                if !visible.isEmpty {
-                    collectionView.reloadItems(at: visible)
-                }
+                reconfigureVisibleItems(in: collectionView)
             }
             synchronizeSelection()
+        }
+
+        /// Reloading items tears cells down and displays them again, so it fires
+        /// `didEndDisplaying` and `willDisplay` a second time. Those callbacks
+        /// cancel and re-request thumbnails, and cancelling clears the in-flight
+        /// `.loading` state, so every arriving state change queued another full
+        /// reload: the browser spun at 100% CPU and no decode ever survived long
+        /// enough to finish. Reconfiguring the cells that are already on screen
+        /// applies the same state without touching the display lifecycle.
+        private func reconfigureVisibleItems(in collectionView: NSCollectionView) {
+            let imageSize = max(72, parent.thumbnailSize)
+            for indexPath in collectionView.indexPathsForVisibleItems() {
+                guard indexPath.item < parent.records.count,
+                      let item = collectionView.item(at: indexPath) as? AssetCollectionItem else {
+                    continue
+                }
+                let record = parent.records[indexPath.item]
+                item.configure(
+                    record: record,
+                    state: parent.thumbnailStates[record.id],
+                    imageSize: imageSize
+                )
+            }
         }
 
         func collectionView(
@@ -290,6 +315,13 @@ private final class AssetCollectionViewController: NSViewController {
         layout.minimumLineSpacing = 18
 
         collectionView.collectionViewLayout = layout
+        // Assigning the layout resets item-class registrations, so registering
+        // any earlier leaves `makeItem` searching for a nib that does not
+        // exist and raising an exception on the first dequeued cell.
+        collectionView.register(
+            AssetCollectionItem.self,
+            forItemWithIdentifier: .assetCollectionItem
+        )
         collectionView.isSelectable = true
         collectionView.allowsMultipleSelection = true
         collectionView.backgroundColors = [.clear]

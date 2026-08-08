@@ -1,4 +1,6 @@
+import ImageIO
 import SQLite3
+import UniformTypeIdentifiers
 import XCTest
 
 final class FramebaseUITests: XCTestCase {
@@ -95,6 +97,116 @@ final class FramebaseUITests: XCTestCase {
             waitForFolderNames(["Projects"], at: rootURL, timeout: 15),
             "Observed folders after redo: \(userFolderNames(at: rootURL) ?? [])"
         )
+    }
+
+    /// The rest of the suite runs against an empty library, so no collection
+    /// view cell is ever dequeued and no thumbnail is ever decoded. Importing
+    /// real images and asserting a cell renders is what covers that path.
+    ///
+    /// Scope note: this covers dequeue, configure, and display. It does not
+    /// catch the cell-lifecycle feedback loop that pinned the browser at 100%
+    /// CPU, because that only starves decodes once they are slower than the
+    /// reload cycle, which needs a real photo library rather than fixtures.
+    @MainActor
+    func testImportedAssetRendersAThumbnailCell() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-\(UUID().uuidString).framebase", isDirectory: true)
+        let sourceDirectoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-Sources-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectoryURL, withIntermediateDirectories: true)
+        // More cells than fit at once, so reuse and prefetch run too.
+        let sourceURLs = try (0..<12).map { index in
+            try writeJPEG(named: "sample-\(index).jpg", in: sourceDirectoryURL)
+        }
+
+        let app = XCUIApplication()
+        app.launchEnvironment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] = rootURL.path
+        app.launchEnvironment["FRAMEBASE_UI_TEST_IMPORT_SOURCES"] = sourceURLs
+            .map(\.path)
+            .joined(separator: "\n")
+        app.launch()
+        defer {
+            app.terminate()
+            if rootURL.lastPathComponent.hasPrefix("FramebaseUITests-"),
+               rootURL.pathExtension == "framebase" {
+                try? FileManager.default.removeItem(at: rootURL)
+            }
+            if sourceDirectoryURL.lastPathComponent.hasPrefix("FramebaseUITests-Sources-") {
+                try? FileManager.default.removeItem(at: sourceDirectoryURL)
+            }
+        }
+
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(sidebarItem(named: "All Assets", in: app).waitForExistence(timeout: 5))
+
+        app.typeKey("i", modifierFlags: [.command, .shift])
+
+        let grid = app.descendants(matching: .any)["assetBrowser.grid"]
+        XCTAssertTrue(
+            grid.waitForExistence(timeout: 30),
+            "The asset grid never replaced the empty-state view."
+        )
+
+        let cells = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "asset.")
+        )
+        let firstCell = cells.element(boundBy: 0)
+        XCTAssertTrue(
+            firstCell.waitForExistence(timeout: 30),
+            "No asset cell was rendered. Grid: \(grid.debugDescription)"
+        )
+        // Only the on-screen cells are realized, so this is a floor, not a count.
+        XCTAssertGreaterThan(cells.count, 0)
+
+        // A dequeued cell that raises during layout takes the process with it,
+        // and a browser that keeps cancelling and re-requesting its thumbnails
+        // pins the main thread, which stalls these queries until they time out.
+        // Interacting after the grid settles is what covers both.
+        firstCell.click()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    private func writeJPEG(named name: String, in directoryURL: URL) throws -> URL {
+        let width = 1_200
+        let height = 900
+        let bytesPerRow = width * 4
+        var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = y * bytesPerRow + x * 4
+                pixels[offset] = UInt8(x * 4 % 256)
+                pixels[offset + 1] = UInt8(y * 5 % 256)
+                pixels[offset + 2] = UInt8((x + y) % 256)
+                pixels[offset + 3] = 255
+            }
+        }
+
+        let url = directoryURL.appendingPathComponent(name, isDirectory: false)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ),
+        let image = context.makeImage(),
+        let destination = CGImageDestinationCreateWithURL(
+            url as CFURL,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return url
     }
 
     @MainActor

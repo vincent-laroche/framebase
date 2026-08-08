@@ -35,6 +35,11 @@ let package = Package(
             name: "FramebaseTestSupport",
             dependencies: ["FramebaseDomain"]
         ),
+        // Development-only bulk folder-tree importer. Not part of the app target.
+        .executableTarget(
+            name: "framebase-import",
+            dependencies: ["FramebaseDomain", "FramebaseCatalog", "FramebaseMedia"]
+        ),
         .testTarget(
             name: "FramebaseDomainTests",
             dependencies: ["FramebaseDomain", "FramebaseTestSupport"]

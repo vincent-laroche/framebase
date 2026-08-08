@@ -21,21 +21,28 @@ public enum ImageIOMetadataExtractorError: Error, LocalizedError, Sendable {
 /// ImageIO-backed still-image validation and normalized metadata extraction.
 ///
 /// The extractor reads only the first image in multi-frame formats. Validation
-/// creates a one-pixel thumbnail so a corrupt file cannot enter the catalog
-/// merely because its container header is readable.
+/// decodes a small thumbnail so a corrupt file cannot enter the catalog merely
+/// because its container header is readable.
 public struct ImageIOMetadataExtractor: MetadataExtractor, Sendable {
+    private static func validationOptions() -> [CFString: Any] {
+        [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: FramebaseMediaFoundation.importValidationMaxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+    }
+
     public init() {}
 
     public func supportsImage(at url: URL) async -> Bool {
         guard let source = imageSource(for: url), CGImageSourceGetCount(source) > 0 else {
             return false
         }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: 1,
-            kCGImageSourceShouldCacheImmediately: true
-        ]
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) != nil
+        return CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            Self.validationOptions() as CFDictionary
+        ) != nil
     }
 
     public func extract(from url: URL) async throws -> ExtractedAssetMetadata {
@@ -43,12 +50,11 @@ public struct ImageIOMetadataExtractor: MetadataExtractor, Sendable {
             throw ImageIOMetadataExtractorError.unsupportedImage(url)
         }
 
-        let validationOptions: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: 1,
-            kCGImageSourceShouldCacheImmediately: true
-        ]
-        guard CGImageSourceCreateThumbnailAtIndex(source, 0, validationOptions as CFDictionary) != nil,
+        guard CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                Self.validationOptions() as CFDictionary
+              ) != nil,
               let rawProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
             throw ImageIOMetadataExtractorError.unreadableImage(url)
         }

@@ -26,6 +26,25 @@ struct ImportPipelineTests {
         #expect(!(await extractor.supportsImage(at: invalidURL)))
     }
 
+    @Test("Import validation decodes above the pixel sizes ImageIO refuses for valid JPEGs")
+    func validatesJPEGWithoutMinimalDecode() async throws {
+        // Real iPhone JPEGs carrying both a JFIF APP0 segment and EXIF produce
+        // no ImageIO thumbnail at a maximum size of one or two pixels, so a
+        // minimal validation decode rejected them as unreadable. Synthetic
+        // fixtures do not reproduce that quirk, so the size itself is pinned.
+        #expect(FramebaseMediaFoundation.importValidationMaxPixelSize >= 4)
+
+        let fixture = try ImportFixture()
+        defer { fixture.remove() }
+        let jpegURL = try fixture.writeJPEG(named: "capture.jpg", width: 640, height: 480)
+        let extractor = ImageIOMetadataExtractor()
+
+        #expect(await extractor.supportsImage(at: jpegURL))
+        let extracted = try await extractor.extract(from: jpegURL)
+        #expect(extracted.width == 640)
+        #expect(extracted.height == 480)
+    }
+
     @Test("A batch imports valid images, reports invalid siblings, and preserves sources")
     func importsValidFilesAndReportsFailures() async throws {
         let fixture = try ImportFixture()
@@ -234,6 +253,14 @@ private struct ImportFixture {
     }
 
     func writePNG(named name: String, width: Int, height: Int) throws -> URL {
+        try writeImage(named: name, width: width, height: height, type: .png)
+    }
+
+    func writeJPEG(named name: String, width: Int, height: Int) throws -> URL {
+        try writeImage(named: name, width: width, height: height, type: .jpeg)
+    }
+
+    private func writeImage(named name: String, width: Int, height: Int, type: UTType) throws -> URL {
         let bytesPerRow = width * 4
         let pixels = Data(repeating: 0x7f, count: bytesPerRow * height)
         guard let provider = CGDataProvider(data: pixels as CFData),
@@ -256,7 +283,7 @@ private struct ImportFixture {
         let url = sources.appendingPathComponent(name)
         guard let destination = CGImageDestinationCreateWithURL(
             url as CFURL,
-            UTType.png.identifier as CFString,
+            type.identifier as CFString,
             1,
             nil
         ) else {

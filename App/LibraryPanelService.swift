@@ -3,6 +3,10 @@ import UniformTypeIdentifiers
 
 @MainActor
 enum LibraryPanelService {
+#if DEBUG
+    static let uiTestImportSourcesKey = "FRAMEBASE_UI_TEST_IMPORT_SOURCES"
+#endif
+
     static func chooseExistingLibrary() -> URL? {
         let panel = NSOpenPanel()
         panel.title = "Open Framebase Library"
@@ -24,6 +28,16 @@ enum LibraryPanelService {
     }
 
     static func chooseImagesForImport() -> [URL] {
+#if DEBUG
+        // A modal open panel cannot be driven from a UI test, so tests supply
+        // the selection directly and everything downstream stays real.
+        if let sources = ProcessInfo.processInfo.environment[uiTestImportSourcesKey] {
+            return sources
+                .split(separator: "\n")
+                .map { URL(fileURLWithPath: String($0), isDirectory: false) }
+        }
+#endif
+
         let panel = NSOpenPanel()
         panel.title = "Import Images"
         panel.message = "Choose still images to copy into your Framebase library."

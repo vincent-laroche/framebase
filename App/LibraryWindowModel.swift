@@ -250,20 +250,26 @@ final class LibraryWindowModel {
                 displayScale: max(1, displayScale)
             )
         )
-        thumbnailStates[record.id] = .loading
+        // `requestThumbnail` is driven from `willDisplay` and prefetch, which
+        // AppKit calls inside the hosting view's layout pass. Publishing an
+        // observed change there re-entrantly asks SwiftUI to update during
+        // layout, and AppKit raises from `_postWindowNeedsUpdateConstraints`.
+        // `thumbnailTasks` is not observed, so it can carry the de-duplication
+        // synchronously while the visible state lands on a later turn.
         let task = Task { [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            thumbnailStates[record.id] = .loading
             do {
                 let payload = try await provider.thumbnail(for: request)
-                guard let self, !Task.isCancelled else { return }
+                guard !Task.isCancelled else { return }
                 thumbnailStates[record.id] = .ready(payload)
             } catch is CancellationError {
                 return
             } catch {
-                guard let self else { return }
                 let originalAvailable = await container.assetBlobStore?.validate(record.storageKey) ?? false
                 thumbnailStates[record.id] = originalAvailable ? .corrupt : .missing
             }
-            self?.thumbnailTasks.removeValue(forKey: record.id)
+            thumbnailTasks.removeValue(forKey: record.id)
         }
         thumbnailTasks[record.id] = (request.id, task)
     }
