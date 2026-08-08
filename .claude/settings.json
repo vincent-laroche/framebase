@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./script/build_and_run.sh)",
+      "Bash(swift test --package-path Packages/FramebaseKit:*)",
+      "Bash(xcodebuild -showBuildSettings:*)",
+      "Bash(xcode-select -p)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean:*)",
+      "Bash(git checkout --:*)"
+    ],
+    "ask": [
+      "Bash(git commit:*)",
+      "Bash(xcodebuild:*)"
+    ]
+  },
+  "enabledPlugins": {
+    "multi-platform-apps@claude-code-workflows": true,
+    "ui-design@claude-code-workflows": true,
+    "accessibility-compliance@claude-code-workflows": true,
+    "tdd-workflows@claude-code-workflows": true,
+    "performance-testing-review@claude-code-workflows": true,
+    "database-design@claude-code-workflows": true
+  }
+}

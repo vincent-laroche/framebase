@@ -2,7 +2,7 @@
 
 ## Current status
 
-Milestone 5 — inspector, hardening, and finish gate — is implemented and locally verified. The phase-one implementation plan is complete for regular local use, without distribution-readiness claims.
+Phase 1 — the native local foundation — is implemented and locally verified for regular local use. Framebase as a complete product is not finished. The full cloud-backed, Finder-integrated, intelligent, workflow-enabled, and agent-accessible product is now governed by `docs/MASTER_ROADMAP.md`.
 
 The repository now contains:
 
@@ -38,13 +38,15 @@ The repository now contains:
 
 ## Active blocker
 
-None. Phase one remains intentionally local-only: no networking, authentication, Cloudflare, sync, AI, OCR, video, or permanent deletion has entered scope.
+None for Phase 1. Phase 2 has not started and no Framebase Cloudflare resources have been created or deployed. Cloudflare work requires a focused Phase 2 plan, read-only account inventory, explicit approval for infrastructure changes, and the required Cloudflare operating skill.
 
 ## Next
 
-1. Use the app with a real personal photo set and record any practical workflow friction as follow-up work.
-2. Add only narrowly justified polish or diagnostics based on that real-use pass.
-3. Keep sandboxing, signing, notarization, distribution, networking, sync, AI, OCR, and video outside scope unless a new plan explicitly introduces them.
+1. Create `docs/phases/PHASE_2_CLOUD_FOUNDATION.md` from the master roadmap.
+2. Perform a read-only Cloudflare inventory using the required operating skill; do not create or deploy resources during inventory.
+3. Lock the Phase 2 threat model, device authentication, D1 schema, blob key model, change protocol, API contract, resource isolation, rollback, observability, and cost controls.
+4. Request explicit approval before creating any Framebase development cloud resources.
+5. Preserve the working local library throughout every cloud migration step.
 
 ## Session log
 
@@ -55,3 +57,5 @@ None. Phase one remains intentionally local-only: no networking, authentication,
 - 2026-08-08 — Codex primary agent — Completed Milestone 3 with native-panel and Finder-drop importing, ImageIO decode validation and metadata extraction, atomic catalog integration with cancellation/rollback/failure reporting, bounded thumbnail/preview caches, and visible missing/corrupt states. Local verification passes 30 package tests, the full native UI suite, the app build, and whitespace checks. Cloudflare remains unused because this phase is deliberately local-only. Next: native Milestone 4 asset-browser behavior.
 - 2026-08-08 — Codex primary agent — Completed Milestone 4 and the functional Milestone 5 surfaces: native collection-view browsing, reusable thumbnail cells, stable multi-selection, keyboard/prefetch/paging behavior, catalog-only multi-asset folder drops, detailed single/multi inspector state, favorites/ratings, and working cache/library settings. Package tests, the full UI suite, app build/launch verification, and whitespace checks pass. Next: final large-catalog, accessibility, restoration, diagnostics, and scope acceptance evidence.
 - 2026-08-08 — Codex primary agent — Closed the Milestone 5 finish gate with chunked large-selection catalog mutations, bounded inspector detail loading, unified import/catalog/thumbnail logging and signposts, a release-mode 100,000-asset acceptance test, full package/UI/build/launch verification, and a deferred-scope source audit. Framebase is ready for regular local use under the implementation plan; no distribution, sandboxing, signing, notarization, cloud, or sync readiness is claimed.
+- 2026-08-08 — Codex primary agent — Corrected the product-level completion status after reviewing the complete original Framebase conversation. Added `docs/MASTER_ROADMAP.md` covering the cloud-backed library, offline sync, richer organization/search, File Provider, OCR/AI, workflows, OpenAPI/CLI/MCP, safety, operations, and phase exit gates. Phase 1 remains complete locally; Framebase overall is not complete, and Phase 2 cloud foundation is next.
+- 2026-08-08 — Codex primary agent — Consolidated the local Git layout after the `01_projects` cleanup. Kept `/Users/vMac/01_projects/private_apps_and_products/framebase` as the sole canonical checkout, verified the obsolete `codex-availability-issue` worktree was clean and fully merged into `main`, retired its Git metadata and local branch, and moved the former `framebase_worktrees` directory to macOS Trash for recoverability. Removed Finder metadata that had created an invalid Git ref, rebuilt path-bound Swift/Xcode caches from zero, passed 31 package tests, and passed `./script/build_and_run.sh --verify` from the canonical path. Existing uncommitted roadmap and agent-configuration work was preserved without committing or pushing.

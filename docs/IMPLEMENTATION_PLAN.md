@@ -1,4 +1,6 @@
-# Framebase macOS Implementation Plan
+# Framebase Phase 1 — Local Foundation Implementation Plan
+
+> **Scope notice:** This document governs the completed local-foundation phase. It is not the full Framebase product roadmap. See `docs/MASTER_ROADMAP.md` for the overall product scope, phase sequence, cloud architecture, Finder integration, intelligence, workflows, and agent platform.
 
 ## Summary
 

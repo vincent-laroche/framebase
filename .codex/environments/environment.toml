@@ -6,6 +6,11 @@ name = "Framebase"
 script = ""
 
 [[actions]]
-name = "Run"
-icon = "run"
-command = "./script/build_and_run.sh"
+name = "Verify"
+icon = "tool"
+command = "./script/build_and_run.sh --verify"
+
+[[actions]]
+name = "Test"
+icon = "tool"
+command = "swift test --package-path Packages/FramebaseKit"
