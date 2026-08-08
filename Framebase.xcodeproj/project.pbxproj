@@ -1,0 +1,491 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* FramebaseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* FramebaseApp.swift */; };
+		A10000000000000000000002 /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* AppContainer.swift */; };
+		A10000000000000000000003 /* FramebaseCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* FramebaseCommands.swift */; };
+		A10000000000000000000004 /* LibraryWindowModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* LibraryWindowModel.swift */; };
+		A10000000000000000000005 /* LibraryWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* LibraryWindowView.swift */; };
+		A10000000000000000000006 /* FoundationSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* FoundationSidebar.swift */; };
+		A10000000000000000000007 /* FoundationAssetBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* FoundationAssetBrowser.swift */; };
+		A10000000000000000000008 /* FoundationInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* FoundationInspector.swift */; };
+		A10000000000000000000009 /* FramebaseSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* FramebaseSettingsView.swift */; };
+		A1000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* Assets.xcassets */; };
+		A1000000000000000000000B /* FramebaseUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* FramebaseUITests.swift */; };
+		A1000000000000000000000C /* FramebaseDomain in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000001 /* FramebaseDomain */; };
+		A1000000000000000000000D /* FramebaseCatalog in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000002 /* FramebaseCatalog */; };
+		A1000000000000000000000E /* FramebaseMedia in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000003 /* FramebaseMedia */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		AB0000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A80000000000000000000001;
+			remoteInfo = Framebase;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* FramebaseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FramebaseApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* FramebaseCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FramebaseCommands.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* LibraryWindowModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryWindowModel.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* LibraryWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryWindowView.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* FoundationSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoundationSidebar.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 /* FoundationAssetBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoundationAssetBrowser.swift; sourceTree = "<group>"; };
+		A20000000000000000000008 /* FoundationInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoundationInspector.swift; sourceTree = "<group>"; };
+		A20000000000000000000009 /* FramebaseSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FramebaseSettingsView.swift; sourceTree = "<group>"; };
+		A2000000000000000000000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A2000000000000000000000B /* FramebaseUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FramebaseUITests.swift; sourceTree = "<group>"; };
+		A2000000000000000000000C /* Framebase.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Framebase.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000000000000000000000D /* FramebaseUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FramebaseUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A30000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000000000000000000000C /* FramebaseDomain in Frameworks */,
+				A1000000000000000000000D /* FramebaseCatalog in Frameworks */,
+				A1000000000000000000000E /* FramebaseMedia in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A40000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A40000000000000000000002 /* App */,
+				A40000000000000000000003 /* UI */,
+				A40000000000000000000009 /* FramebaseUITests */,
+				A4000000000000000000000A /* Resources */,
+				A4000000000000000000000B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A40000000000000000000002 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001 /* FramebaseApp.swift */,
+				A20000000000000000000002 /* AppContainer.swift */,
+				A20000000000000000000003 /* FramebaseCommands.swift */,
+				A20000000000000000000004 /* LibraryWindowModel.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000003 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				A40000000000000000000004 /* AppShell */,
+				A40000000000000000000005 /* Sidebar */,
+				A40000000000000000000006 /* AssetBrowser */,
+				A40000000000000000000007 /* Inspector */,
+				A40000000000000000000008 /* Settings */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000004 /* AppShell */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000005 /* LibraryWindowView.swift */,
+			);
+			path = AppShell;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000005 /* Sidebar */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000006 /* FoundationSidebar.swift */,
+			);
+			path = Sidebar;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000006 /* AssetBrowser */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000007 /* FoundationAssetBrowser.swift */,
+			);
+			path = AssetBrowser;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000007 /* Inspector */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000008 /* FoundationInspector.swift */,
+			);
+			path = Inspector;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000008 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000009 /* FramebaseSettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000009 /* FramebaseUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000000000000B /* FramebaseUITests.swift */,
+			);
+			path = FramebaseUITests;
+			sourceTree = "<group>";
+		};
+		A4000000000000000000000A /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000000000000A /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		A4000000000000000000000B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000000000000C /* Framebase.app */,
+				A2000000000000000000000D /* FramebaseUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A80000000000000000000001 /* Framebase */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A70000000000000000000002 /* Build configuration list for PBXNativeTarget "Framebase" */;
+			buildPhases = (
+				A50000000000000000000001 /* Sources */,
+				A30000000000000000000001 /* Frameworks */,
+				A60000000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Framebase;
+			packageProductDependencies = (
+				AA0000000000000000000001 /* FramebaseDomain */,
+				AA0000000000000000000002 /* FramebaseCatalog */,
+				AA0000000000000000000003 /* FramebaseMedia */,
+			);
+			productName = Framebase;
+			productReference = A2000000000000000000000C /* Framebase.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A80000000000000000000002 /* FramebaseUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A70000000000000000000003 /* Build configuration list for PBXNativeTarget "FramebaseUITests" */;
+			buildPhases = (
+				A50000000000000000000002 /* Sources */,
+				A30000000000000000000002 /* Frameworks */,
+				A60000000000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AC0000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = FramebaseUITests;
+			productName = FramebaseUITests;
+			productReference = A2000000000000000000000D /* FramebaseUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A90000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					A80000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					A80000000000000000000002 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = A80000000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = A70000000000000000000001 /* Build configuration list for PBXProject "Framebase" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A40000000000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AD0000000000000000000001 /* XCLocalSwiftPackageReference "Packages/FramebaseKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A4000000000000000000000B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A80000000000000000000001 /* Framebase */,
+				A80000000000000000000002 /* FramebaseUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A60000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000000000000000000000A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A60000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A50000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001 /* FramebaseApp.swift in Sources */,
+				A10000000000000000000002 /* AppContainer.swift in Sources */,
+				A10000000000000000000003 /* FramebaseCommands.swift in Sources */,
+				A10000000000000000000004 /* LibraryWindowModel.swift in Sources */,
+				A10000000000000000000005 /* LibraryWindowView.swift in Sources */,
+				A10000000000000000000006 /* FoundationSidebar.swift in Sources */,
+				A10000000000000000000007 /* FoundationAssetBrowser.swift in Sources */,
+				A10000000000000000000008 /* FoundationInspector.swift in Sources */,
+				A10000000000000000000009 /* FramebaseSettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A50000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000000000000000000000B /* FramebaseUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AC0000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A80000000000000000000001 /* Framebase */;
+			targetProxy = AB0000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AE0000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AE0000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		AE0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Framebase;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.graphics-design";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vincentlaroche.framebase;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		AE0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Framebase;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.graphics-design";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vincentlaroche.framebase;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		AE0000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vincentlaroche.framebase.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = Framebase;
+			};
+			name = Debug;
+		};
+		AE0000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vincentlaroche.framebase.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = Framebase;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A70000000000000000000001 /* Build configuration list for PBXProject "Framebase" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AE0000000000000000000001 /* Debug */,
+				AE0000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A70000000000000000000002 /* Build configuration list for PBXNativeTarget "Framebase" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AE0000000000000000000003 /* Debug */,
+				AE0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A70000000000000000000003 /* Build configuration list for PBXNativeTarget "FramebaseUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AE0000000000000000000005 /* Debug */,
+				AE0000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		AD0000000000000000000001 /* XCLocalSwiftPackageReference "Packages/FramebaseKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/FramebaseKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AA0000000000000000000001 /* FramebaseDomain */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD0000000000000000000001 /* XCLocalSwiftPackageReference "Packages/FramebaseKit" */;
+			productName = FramebaseDomain;
+		};
+		AA0000000000000000000002 /* FramebaseCatalog */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD0000000000000000000001 /* XCLocalSwiftPackageReference "Packages/FramebaseKit" */;
+			productName = FramebaseCatalog;
+		};
+		AA0000000000000000000003 /* FramebaseMedia */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD0000000000000000000001 /* XCLocalSwiftPackageReference "Packages/FramebaseKit" */;
+			productName = FramebaseMedia;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A90000000000000000000001 /* Project object */;
+}
