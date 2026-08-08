@@ -80,6 +80,24 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
         }
     }
 
+    public func assets(ids: Set<AssetID>) async throws -> [Asset] {
+        guard !ids.isEmpty else { return [] }
+        return try await databasePool.read { db in
+            var assets: [Asset] = []
+            let identifiers = ids.map(\.description).sorted()
+            for chunk in identifiers.chunked(maximumCount: 500) {
+                let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
+                let records = try AssetRecord.fetchAll(
+                    db,
+                    sql: "SELECT * FROM assets WHERE id IN (\(placeholders))",
+                    arguments: StatementArguments(chunk)
+                )
+                assets.append(contentsOf: try records.map { try $0.domainAsset() })
+            }
+            return assets
+        }
+    }
+
     public func observe(matching query: AssetQuery) -> AsyncThrowingStream<CatalogChange, any Error> {
         let regions: [any DatabaseRegionConvertible] = query.scope.isAlbum
             ? [Table("assets"), Table("album_assets")]
@@ -139,13 +157,16 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
                 throw CatalogError.folderNotFound(folderID)
             }
             let identifiers = assetIDs.map(\.description).sorted()
-            let placeholders = identifiers.map { _ in "?" }.joined(separator: ", ")
-            var arguments: StatementArguments = [folderID.description, CatalogDate.milliseconds(Date())]
-            arguments += StatementArguments(identifiers)
-            try db.execute(
-                sql: "UPDATE assets SET parent_folder_id = ?, updated_at_ms = ? WHERE id IN (\(placeholders))",
-                arguments: arguments
-            )
+            let updatedAt = CatalogDate.milliseconds(Date())
+            for chunk in identifiers.chunked(maximumCount: 500) {
+                let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
+                var arguments: StatementArguments = [folderID.description, updatedAt]
+                arguments += StatementArguments(chunk)
+                try db.execute(
+                    sql: "UPDATE assets SET parent_folder_id = ?, updated_at_ms = ? WHERE id IN (\(placeholders))",
+                    arguments: arguments
+                )
+            }
         }
     }
 
@@ -157,13 +178,16 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
         guard !assetIDs.isEmpty else { return }
         try await databasePool.write { db in
             let identifiers = assetIDs.map(\.description).sorted()
-            let placeholders = identifiers.map { _ in "?" }.joined(separator: ", ")
-            var arguments: StatementArguments = [value, CatalogDate.milliseconds(Date())]
-            arguments += StatementArguments(identifiers)
-            try db.execute(
-                sql: "UPDATE assets SET \(assignmentSQL), updated_at_ms = ? WHERE id IN (\(placeholders))",
-                arguments: arguments
-            )
+            let updatedAt = CatalogDate.milliseconds(Date())
+            for chunk in identifiers.chunked(maximumCount: 500) {
+                let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
+                var arguments: StatementArguments = [value, updatedAt]
+                arguments += StatementArguments(chunk)
+                try db.execute(
+                    sql: "UPDATE assets SET \(assignmentSQL), updated_at_ms = ? WHERE id IN (\(placeholders))",
+                    arguments: arguments
+                )
+            }
         }
     }
 
@@ -229,6 +253,15 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
                     """,
                 arguments: [albumID.description]
             )
+        }
+    }
+}
+
+private extension Array {
+    func chunked(maximumCount: Int) -> [ArraySlice<Element>] {
+        guard maximumCount > 0 else { return [] }
+        return stride(from: 0, to: count, by: maximumCount).map { start in
+            self[start..<Swift.min(start + maximumCount, count)]
         }
     }
 }

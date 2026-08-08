@@ -84,7 +84,15 @@ final class LibraryWindowModel {
     var orderedVisibleAssetIDs: [AssetID] = []
     var assetGridRecords: [AssetGridRecord] = []
     var thumbnailStates: [AssetID: AssetThumbnailState] = [:]
-    var selectedAssetIDs: Set<AssetID> = []
+    var selectedAssetIDs: Set<AssetID> = [] {
+        didSet {
+            guard selectedAssetIDs != oldValue else { return }
+            scheduleInspectorRefresh()
+        }
+    }
+    var selectedAssets: [Asset] = []
+    var inspectorSelectionIsLimited = false
+    var inspectorPreviewState: AssetThumbnailState?
     var selectionAnchorID: AssetID?
     var keyboardFocusedAssetID: AssetID?
     var expandedFolderIDs: Set<FolderID> = []
@@ -119,6 +127,9 @@ final class LibraryWindowModel {
     @ObservationIgnored private var thumbnailTasks: [AssetID: (ThumbnailRequestID, Task<Void, Never>)] = [:]
     @ObservationIgnored private var folderObservationTask: Task<Void, Never>?
     @ObservationIgnored private var albumObservationTask: Task<Void, Never>?
+    @ObservationIgnored private var inspectorTask: Task<Void, Never>?
+    @ObservationIgnored private var inspectorPreviewTask: Task<Void, Never>?
+    @ObservationIgnored private var inspectorPreviewRequestID: ThumbnailRequestID?
 
     init(container: AppContainer) {
         self.container = container
@@ -130,6 +141,8 @@ final class LibraryWindowModel {
         for (_, entry) in thumbnailTasks { entry.1.cancel() }
         folderObservationTask?.cancel()
         albumObservationTask?.cancel()
+        inspectorTask?.cancel()
+        inspectorPreviewTask?.cancel()
     }
 
     func requestImport() {
@@ -261,6 +274,78 @@ final class LibraryWindowModel {
         Task { await container.thumbnailProvider?.cancel(requestID: entry.0) }
         if case .loading = thumbnailStates[assetID] {
             thumbnailStates.removeValue(forKey: assetID)
+        }
+    }
+
+    func loadNextAssetPageIfNeeded(near index: Int) {
+        guard index >= max(0, assetGridRecords.count - 40),
+              assetGridRecords.count < orderedVisibleAssetIDs.count,
+              thumbnailPrefetchTask == nil,
+              let repository = container.assetRepository else { return }
+
+        let query = assetQuery
+        let sort = assetSort
+        let offset = assetGridRecords.count
+        thumbnailPrefetchTask = Task { [weak self] in
+            defer { self?.thumbnailPrefetchTask = nil }
+            do {
+                let page = try await repository.page(
+                    matching: query,
+                    sortedBy: sort,
+                    offset: offset,
+                    limit: 200
+                )
+                guard let self, !Task.isCancelled,
+                      query == assetQuery, sort == assetSort,
+                      assetGridRecords.count == offset else { return }
+                assetGridRecords.append(contentsOf: page.records)
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.statusMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func canMoveAssets(_ assetIDs: Set<AssetID>, to folderID: FolderID) -> Bool {
+        guard !assetIDs.isEmpty,
+              folderTreeSnapshot?.folders.contains(where: { $0.id == folderID }) == true else {
+            return false
+        }
+        switch navigationTarget {
+        case let .folder(currentFolderID): return currentFolderID != folderID
+        case .inbox: return folderTreeSnapshot?.inboxID != folderID
+        default: return true
+        }
+    }
+
+    func moveAssets(_ assetIDs: Set<AssetID>, to folderID: FolderID) async {
+        guard canMoveAssets(assetIDs, to: folderID),
+              let repository = container.assetRepository else { return }
+        do {
+            try await repository.moveAssets(assetIDs, to: folderID)
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func setFavorite(_ favorite: Bool) async {
+        guard !selectedAssetIDs.isEmpty, let repository = container.assetRepository else { return }
+        do {
+            try await repository.updateFavorite(favorite, for: selectedAssetIDs)
+            await refreshInspectorNow()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func setRating(_ rating: AssetRating) async {
+        guard !selectedAssetIDs.isEmpty, let repository = container.assetRepository else { return }
+        do {
+            try await repository.updateRating(rating, for: selectedAssetIDs)
+            await refreshInspectorNow()
+        } catch {
+            statusMessage = error.localizedDescription
         }
     }
 
@@ -497,6 +582,74 @@ final class LibraryWindowModel {
         thumbnailTasks.removeAll()
         if clearStates {
             thumbnailStates.removeAll()
+        }
+    }
+
+    private func scheduleInspectorRefresh() {
+        inspectorTask?.cancel()
+        inspectorPreviewTask?.cancel()
+        if let requestID = inspectorPreviewRequestID {
+            Task { await container.thumbnailProvider?.cancel(requestID: requestID) }
+        }
+        inspectorPreviewRequestID = nil
+        selectedAssets = []
+        inspectorSelectionIsLimited = selectedAssetIDs.count > 500
+        inspectorPreviewState = nil
+        guard !selectedAssetIDs.isEmpty, !inspectorSelectionIsLimited else { return }
+
+        inspectorTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard let self, !Task.isCancelled else { return }
+            await refreshInspectorNow()
+        }
+    }
+
+    private func refreshInspectorNow() async {
+        guard let repository = container.assetRepository else { return }
+        let selection = selectedAssetIDs
+        do {
+            let assets = try await repository.assets(ids: selection)
+            guard selection == selectedAssetIDs else { return }
+            selectedAssets = assets.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+            if assets.count == 1, let asset = assets.first {
+                requestInspectorPreview(for: asset)
+            } else {
+                inspectorPreviewState = nil
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    private func requestInspectorPreview(for asset: Asset) {
+        guard let provider = container.thumbnailProvider else { return }
+        inspectorPreviewTask?.cancel()
+        let request = ThumbnailRequest(
+            storageKey: asset.storageKey,
+            fingerprint: AssetFingerprint(
+                assetID: asset.id,
+                fileSize: asset.fileSize,
+                modifiedAtMilliseconds: Int64(asset.modifiedAt.timeIntervalSince1970 * 1_000)
+            ),
+            target: ThumbnailTarget(width: 720, height: 720, displayScale: 1)
+        )
+        inspectorPreviewRequestID = request.id
+        inspectorPreviewState = .loading
+        inspectorPreviewTask = Task { [weak self] in
+            do {
+                let payload = try await provider.preview(for: request)
+                guard let self, !Task.isCancelled, selectedAssetIDs == Set([asset.id]) else { return }
+                inspectorPreviewState = .ready(payload)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self else { return }
+                let available = await container.assetBlobStore?.validate(asset.storageKey) ?? false
+                inspectorPreviewState = available ? .corrupt : .missing
+            }
+            self?.inspectorPreviewRequestID = nil
         }
     }
 

@@ -1,3 +1,4 @@
+import AppKit
 import FramebaseMedia
 import SwiftUI
 
@@ -6,14 +7,20 @@ struct FramebaseSettingsView: View {
 
     @AppStorage("cache.diskLimitGB") private var diskLimitGB = 5.0
     @AppStorage("browser.thumbnailSize") private var thumbnailSize = 176.0
+    @State private var isClearingCache = false
+    @State private var message: String?
 
     var body: some View {
         TabView {
             Form {
                 Section("Browser") {
                     LabeledContent("Default thumbnail size") {
-                        Slider(value: $thumbnailSize, in: 96...280, step: 8)
-                            .frame(width: 220)
+                        HStack {
+                            Slider(value: $thumbnailSize, in: 96...280, step: 8)
+                                .frame(width: 200)
+                            Text("\(thumbnailSize, specifier: "%.0f") pt")
+                                .frame(width: 52, alignment: .trailing)
+                        }
                     }
                 }
 
@@ -27,8 +34,21 @@ struct FramebaseSettingsView: View {
                         }
                     }
 
-                    Button("Clear Derived Cache") {}
-                        .disabled(true)
+                    HStack {
+                        Button("Clear Derived Cache") {
+                            clearCache()
+                        }
+                        .disabled(isClearingCache || container.thumbnailProvider == nil)
+
+                        if isClearingCache {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+
+                    Text("Original images and catalog records are never removed when this cache is cleared.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
@@ -39,14 +59,30 @@ struct FramebaseSettingsView: View {
             Form {
                 Section("Library") {
                     LabeledContent("State", value: libraryStateDescription)
+                    if let rootURL = container.libraryRootURL {
+                        LabeledContent("Location", value: rootURL.path)
+                        Button("Reveal Library in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([rootURL])
+                        }
+                    }
                     LabeledContent("Catalog schema", value: container.catalogSchemaVersion.formatted())
                     LabeledContent(
-                        "Default memory cache",
+                        "Thumbnail cache format",
+                        value: container.thumbnailCacheFormatVersion.formatted()
+                    )
+                    LabeledContent(
+                        "Memory cache limit",
                         value: ByteCountFormatter.string(
                             fromByteCount: Int64(FramebaseMediaFoundation.defaultMemoryCacheBytes),
                             countStyle: .memory
                         )
                     )
+                }
+
+                Section("Scope") {
+                    LabeledContent("Network", value: "Disabled")
+                    LabeledContent("Original storage", value: "Managed locally")
+                    LabeledContent("Permanent deletion", value: "Not implemented")
                 }
             }
             .formStyle(.grouped)
@@ -54,8 +90,40 @@ struct FramebaseSettingsView: View {
                 Label("Diagnostics", systemImage: "stethoscope")
             }
         }
-        .frame(width: 520, height: 340)
+        .frame(width: 560, height: 390)
         .scenePadding()
+        .onChange(of: diskLimitGB) {
+            do {
+                try container.updateThumbnailDiskLimit(gigabytes: diskLimitGB)
+            } catch {
+                message = error.localizedDescription
+            }
+        }
+        .alert("Framebase Settings", isPresented: messageBinding) {
+            Button("OK") { message = nil }
+        } message: {
+            Text(message ?? "")
+        }
+    }
+
+    private var messageBinding: Binding<Bool> {
+        Binding(
+            get: { message != nil },
+            set: { if !$0 { message = nil } }
+        )
+    }
+
+    private func clearCache() {
+        isClearingCache = true
+        Task {
+            do {
+                try await container.clearDerivedCache()
+                message = "The derived thumbnail and preview cache was cleared. Your originals are unchanged."
+            } catch {
+                message = error.localizedDescription
+            }
+            isClearingCache = false
+        }
     }
 
     private var libraryStateDescription: String {

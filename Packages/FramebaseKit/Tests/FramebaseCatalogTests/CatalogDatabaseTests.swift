@@ -133,6 +133,11 @@ struct CatalogDatabaseTests {
         )
         #expect(newest.first == assets.last?.id)
 
+        let allAssetIDs = Set(assets.map(\.id))
+        try await database.assets.updateFavorite(true, for: allAssetIDs)
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .favorites)) == 510)
+        try await database.assets.updateFavorite(false, for: allAssetIDs)
+
         let chosen = assets[42]
         try await database.assets.updateDisplayName("  Hero Portrait  ", for: chosen.id)
         try await database.assets.updateFavorite(true, for: [chosen.id])
@@ -146,6 +151,8 @@ struct CatalogDatabaseTests {
         #expect(detail.rating.rawValue == 5)
         #expect(detail.parentFolderID == folderB.id)
         #expect(detail.localURL == nil)
+        let batchDetails = try await database.assets.assets(ids: [chosen.id, assets[43].id])
+        #expect(Set(batchDetails.map(\.id)) == [chosen.id, assets[43].id])
         let movedPage = try await database.assets.page(
             matching: AssetQuery(scope: .folder(folderB.id)),
             sortedBy: .defaultSort,

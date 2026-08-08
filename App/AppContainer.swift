@@ -107,6 +107,20 @@ final class AppContainer {
         }
     }
 
+    func clearDerivedCache() async throws {
+        try await thumbnailProvider?.clearDerivedCache()
+    }
+
+    func updateThumbnailDiskLimit(gigabytes: Double) throws {
+        guard let blobStore = assetBlobStore else { return }
+        let boundedGigabytes = min(max(gigabytes, 1), 20)
+        thumbnailProvider = try ImageIOThumbnailProvider(
+            blobStore: blobStore,
+            cacheDirectoryURL: try Self.thumbnailCacheDirectoryURL(),
+            diskCacheByteLimit: Int64(boundedGigabytes * 1_024 * 1_024 * 1_024)
+        )
+    }
+
     private func activateLibrary(_ layout: LibraryPackageLayout, persistSelection: Bool = true) async throws {
         let catalog = try CatalogDatabase(catalogURL: layout.catalogDatabaseURL)
         let blobStore = try ManagedAssetBlobStore(

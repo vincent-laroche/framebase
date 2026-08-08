@@ -7,6 +7,11 @@ struct SidebarFolderDrop: Equatable, Sendable {
     let destinationParentFolderID: FolderID?
 }
 
+struct SidebarAssetDrop: Equatable, Sendable {
+    let assetIDs: Set<AssetID>
+    let destinationFolderID: FolderID
+}
+
 enum SidebarContextAction: Equatable, Sendable {
     case createFolder(parentFolderID: FolderID?)
     case deleteFolder(FolderID)
@@ -30,6 +35,8 @@ struct FoundationSidebar: NSViewRepresentable {
     var onContextAction: (SidebarContextAction) -> Void
     var validateFolderDrop: (SidebarFolderDrop) -> SidebarDropDisposition
     var onReparentFolder: (SidebarFolderDrop) -> Void
+    var validateAssetDrop: (SidebarAssetDrop) -> SidebarDropDisposition
+    var onMoveAssets: (SidebarAssetDrop) -> Void
 
     init(
         folderTree: FolderTreeSnapshot? = nil,
@@ -41,7 +48,9 @@ struct FoundationSidebar: NSViewRepresentable {
         onRenameFolder: @escaping (FolderID, String) -> Void = { _, _ in },
         onContextAction: @escaping (SidebarContextAction) -> Void = { _ in },
         validateFolderDrop: @escaping (SidebarFolderDrop) -> SidebarDropDisposition = { _ in .rejected },
-        onReparentFolder: @escaping (SidebarFolderDrop) -> Void = { _ in }
+        onReparentFolder: @escaping (SidebarFolderDrop) -> Void = { _ in },
+        validateAssetDrop: @escaping (SidebarAssetDrop) -> SidebarDropDisposition = { _ in .rejected },
+        onMoveAssets: @escaping (SidebarAssetDrop) -> Void = { _ in }
     ) {
         self.folderTree = folderTree
         self.albums = albums
@@ -53,6 +62,8 @@ struct FoundationSidebar: NSViewRepresentable {
         self.onContextAction = onContextAction
         self.validateFolderDrop = validateFolderDrop
         self.onReparentFolder = onReparentFolder
+        self.validateAssetDrop = validateAssetDrop
+        self.onMoveAssets = onMoveAssets
     }
 
     func makeCoordinator() -> Coordinator {
@@ -77,7 +88,7 @@ struct FoundationSidebar: NSViewRepresentable {
         outlineView.floatsGroupRows = false
         outlineView.delegate = context.coordinator
         outlineView.dataSource = context.coordinator
-        outlineView.registerForDraggedTypes([.framebaseFolder])
+        outlineView.registerForDraggedTypes([.framebaseFolder, .framebaseAssets])
         outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
         outlineView.focusRingType = .exterior
         outlineView.menu = context.coordinator.contextMenu
@@ -315,6 +326,19 @@ struct FoundationSidebar: NSViewRepresentable {
             proposedItem item: Any?,
             proposedChildIndex index: Int
         ) -> NSDragOperation {
+            if let drop = assetDrop(from: info, destinationItem: item),
+               parent.validateAssetDrop(drop) == .allowed {
+                if let destinationNode = sidebarNode(for: drop.destinationFolderID) {
+                    outlineView.setDropItem(destinationNode, dropChildIndex: NSOutlineViewDropOnItemIndex)
+                    if case .folder = destinationNode.id {
+                        scheduleHoverExpansion(for: drop.destinationFolderID, node: destinationNode)
+                    } else {
+                        cancelHoverExpansion()
+                    }
+                }
+                return .move
+            }
+
             guard let drop = folderDrop(from: info, destinationItem: item),
                   isStructurallyValid(drop),
                   parent.validateFolderDrop(drop) == .allowed else {
@@ -341,6 +365,11 @@ struct FoundationSidebar: NSViewRepresentable {
             childIndex index: Int
         ) -> Bool {
             defer { cancelHoverExpansion() }
+            if let drop = assetDrop(from: info, destinationItem: item),
+               parent.validateAssetDrop(drop) == .allowed {
+                parent.onMoveAssets(drop)
+                return true
+            }
             guard let drop = folderDrop(from: info, destinationItem: item),
                   isStructurallyValid(drop),
                   parent.validateFolderDrop(drop) == .allowed else { return false }
@@ -580,6 +609,36 @@ struct FoundationSidebar: NSViewRepresentable {
                 sourceFolderID: FolderID(rawValue: uuid),
                 destinationParentFolderID: destinationParentFolderID
             )
+        }
+
+        private func assetDrop(
+            from draggingInfo: any NSDraggingInfo,
+            destinationItem: Any?
+        ) -> SidebarAssetDrop? {
+            guard let tokenText = draggingInfo.draggingPasteboard.string(forType: .framebaseAssets),
+                  let token = UUID(uuidString: tokenText),
+                  let assetIDs = AssetDragSessionRegistry.assetIDs(for: token),
+                  !assetIDs.isEmpty,
+                  let node = destinationItem as? SidebarNode else { return nil }
+
+            let destinationFolderID: FolderID
+            switch node.id {
+            case let .folder(folderID):
+                destinationFolderID = folderID
+            case .destination(.inbox):
+                guard let inboxID = parent.folderTree?.inboxID else { return nil }
+                destinationFolderID = inboxID
+            default:
+                return nil
+            }
+            return SidebarAssetDrop(assetIDs: assetIDs, destinationFolderID: destinationFolderID)
+        }
+
+        private func sidebarNode(for folderID: FolderID) -> SidebarNode? {
+            if folderID == parent.folderTree?.inboxID {
+                return nodesByID[.destination(.inbox)]
+            }
+            return nodesByID[.folder(folderID)]
         }
 
         private func isStructurallyValid(_ drop: SidebarFolderDrop) -> Bool {

@@ -22,17 +22,22 @@ struct FoundationAssetBrowser: View {
                     }
                     .accessibilityIdentifier("assetBrowser.empty.\(model.navigationTarget.title)")
                 } else {
-                    ScrollView {
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: model.thumbnailSize), spacing: 16)],
-                            spacing: 18
-                        ) {
-                            ForEach(model.assetGridRecords) { record in
-                                AssetThumbnailTile(record: record, model: model)
-                            }
-                        }
-                        .padding(20)
-                    }
+                    NativeAssetCollection(
+                        records: model.assetGridRecords,
+                        thumbnailStates: model.thumbnailStates,
+                        selectedAssetIDs: model.selectedAssetIDs,
+                        thumbnailSize: model.thumbnailSize,
+                        onSelectionChanged: { ids, anchorID in
+                            model.selectedAssetIDs = ids
+                            model.selectionAnchorID = anchorID
+                            model.keyboardFocusedAssetID = anchorID
+                        },
+                        onRequestThumbnail: { record, scale in
+                            model.requestThumbnail(for: record, displayScale: scale)
+                        },
+                        onCancelThumbnail: model.cancelThumbnail,
+                        onNearEnd: model.loadNextAssetPageIfNeeded
+                    )
                     .accessibilityIdentifier("assetBrowser.grid")
                 }
             }
@@ -41,66 +46,378 @@ struct FoundationAssetBrowser: View {
     }
 }
 
-private struct AssetThumbnailTile: View {
-    let record: AssetGridRecord
-    let model: LibraryWindowModel
+@MainActor
+enum AssetDragSessionRegistry {
+    private static var sessions: [UUID: Set<AssetID>] = [:]
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.1))
+    static func create(assetIDs: Set<AssetID>) -> UUID {
+        let token = UUID()
+        sessions[token] = assetIDs
+        return token
+    }
 
-                switch model.thumbnailStates[record.id] {
-                case let .ready(payload):
-                    if let image = NSImage(data: payload.encodedData) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } else {
-                        thumbnailFailure("exclamationmark.triangle", label: "Corrupt thumbnail")
-                    }
-                case .missing:
-                    thumbnailFailure("questionmark.folder", label: "Original missing")
-                case .corrupt:
-                    thumbnailFailure("exclamationmark.triangle", label: "Image unreadable")
-                case .loading:
-                    ProgressView()
-                        .controlSize(.small)
-                case nil:
-                    Image(systemName: "photo")
-                        .font(.title2)
-                        .foregroundStyle(.tertiary)
+    static func assetIDs(for token: UUID) -> Set<AssetID>? {
+        sessions[token]
+    }
+
+    static func remove(_ token: UUID) {
+        sessions.removeValue(forKey: token)
+    }
+}
+
+extension NSPasteboard.PasteboardType {
+    static let framebaseAssets = Self("com.vincentlaroche.framebase.assets")
+}
+
+private struct NativeAssetCollection: NSViewControllerRepresentable {
+    let records: [AssetGridRecord]
+    let thumbnailStates: [AssetID: AssetThumbnailState]
+    let selectedAssetIDs: Set<AssetID>
+    let thumbnailSize: Double
+    let onSelectionChanged: (Set<AssetID>, AssetID?) -> Void
+    let onRequestThumbnail: (AssetGridRecord, Double) -> Void
+    let onCancelThumbnail: (AssetID) -> Void
+    let onNearEnd: (Int) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSViewController(context: Context) -> AssetCollectionViewController {
+        let controller = AssetCollectionViewController()
+        let collectionView = controller.collectionView
+        collectionView.dataSource = context.coordinator
+        collectionView.delegate = context.coordinator
+        collectionView.prefetchDataSource = context.coordinator
+        collectionView.register(
+            AssetCollectionItem.self,
+            forItemWithIdentifier: .assetCollectionItem
+        )
+        collectionView.registerForDraggedTypes([.framebaseAssets])
+        collectionView.setDraggingSourceOperationMask(.move, forLocal: true)
+        context.coordinator.collectionView = collectionView
+        context.coordinator.apply(parent: self, reloadAll: true)
+        return controller
+    }
+
+    func updateNSViewController(_ controller: AssetCollectionViewController, context: Context) {
+        let priorIDs = context.coordinator.parent.records.map(\.id)
+        let reloadAll = priorIDs != records.map(\.id)
+            || context.coordinator.parent.thumbnailSize != thumbnailSize
+        context.coordinator.apply(parent: self, reloadAll: reloadAll)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject,
+        NSCollectionViewDataSource,
+        NSCollectionViewDelegate,
+        NSCollectionViewPrefetching
+    {
+        var parent: NativeAssetCollection
+        weak var collectionView: NSCollectionView?
+        private var isSynchronizingSelection = false
+        private var activeDragToken: UUID?
+
+        init(parent: NativeAssetCollection) {
+            self.parent = parent
+        }
+
+        func apply(parent: NativeAssetCollection, reloadAll: Bool) {
+            self.parent = parent
+            guard let collectionView else { return }
+            if let layout = collectionView.collectionViewLayout as? NSCollectionViewFlowLayout {
+                let size = max(72, parent.thumbnailSize)
+                layout.itemSize = NSSize(width: size, height: size + 28)
+                layout.invalidateLayout()
+            }
+            if reloadAll {
+                collectionView.reloadData()
+            } else {
+                let visible = Set(collectionView.indexPathsForVisibleItems())
+                if !visible.isEmpty {
+                    collectionView.reloadItems(at: visible)
                 }
             }
-            .frame(height: model.thumbnailSize)
-
-            Text(record.displayName)
-                .font(.caption)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            synchronizeSelection()
         }
-        .onAppear {
-            model.requestThumbnail(
-                for: record,
-                displayScale: Double(NSScreen.main?.backingScaleFactor ?? 2)
+
+        func collectionView(
+            _ collectionView: NSCollectionView,
+            numberOfItemsInSection section: Int
+        ) -> Int {
+            parent.records.count
+        }
+
+        func collectionView(
+            _ collectionView: NSCollectionView,
+            itemForRepresentedObjectAt indexPath: IndexPath
+        ) -> NSCollectionViewItem {
+            guard indexPath.item < parent.records.count,
+                  let item = collectionView.makeItem(
+                    withIdentifier: .assetCollectionItem,
+                    for: indexPath
+                  ) as? AssetCollectionItem else {
+                return NSCollectionViewItem()
+            }
+            let record = parent.records[indexPath.item]
+            item.configure(
+                record: record,
+                state: parent.thumbnailStates[record.id],
+                imageSize: max(72, parent.thumbnailSize)
             )
+            return item
         }
-        .onDisappear {
-            model.cancelThumbnail(for: record.id)
+
+        func collectionView(
+            _ collectionView: NSCollectionView,
+            willDisplay item: NSCollectionViewItem,
+            forRepresentedObjectAt indexPath: IndexPath
+        ) {
+            guard indexPath.item < parent.records.count else { return }
+            let record = parent.records[indexPath.item]
+            parent.onRequestThumbnail(
+                record,
+                Double(collectionView.window?.backingScaleFactor ?? 2)
+            )
+            parent.onNearEnd(indexPath.item)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(record.displayName)
+
+        func collectionView(
+            _ collectionView: NSCollectionView,
+            didEndDisplaying item: NSCollectionViewItem,
+            forRepresentedObjectAt indexPath: IndexPath
+        ) {
+            guard indexPath.item < parent.records.count else { return }
+            parent.onCancelThumbnail(parent.records[indexPath.item].id)
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
+            publishSelection(changedIndexPaths: indexPaths)
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) {
+            publishSelection(changedIndexPaths: indexPaths)
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
+            let scale = Double(collectionView.window?.backingScaleFactor ?? 2)
+            for indexPath in indexPaths where indexPath.item < parent.records.count {
+                parent.onRequestThumbnail(parent.records[indexPath.item], scale)
+                parent.onNearEnd(indexPath.item)
+            }
+        }
+
+        func collectionView(
+            _ collectionView: NSCollectionView,
+            cancelPrefetchingForItemsAt indexPaths: [IndexPath]
+        ) {
+            for indexPath in indexPaths where indexPath.item < parent.records.count {
+                parent.onCancelThumbnail(parent.records[indexPath.item].id)
+            }
+        }
+
+        func collectionView(
+            _ collectionView: NSCollectionView,
+            pasteboardWriterForItemAt indexPath: IndexPath
+        ) -> (any NSPasteboardWriting)? {
+            guard indexPath.item < parent.records.count else { return nil }
+            let selectedIDs = assetIDs(for: collectionView.selectionIndexPaths)
+            let draggedIDs = selectedIDs.isEmpty
+                ? Set([parent.records[indexPath.item].id])
+                : selectedIDs
+            if activeDragToken == nil {
+                activeDragToken = AssetDragSessionRegistry.create(assetIDs: draggedIDs)
+            }
+            guard let activeDragToken else { return nil }
+            let item = NSPasteboardItem()
+            item.setString(activeDragToken.uuidString, forType: .framebaseAssets)
+            return item
+        }
+
+        func collectionView(
+            _ collectionView: NSCollectionView,
+            draggingSession session: NSDraggingSession,
+            endedAt screenPoint: NSPoint,
+            dragOperation operation: NSDragOperation
+        ) {
+            if let activeDragToken {
+                AssetDragSessionRegistry.remove(activeDragToken)
+                self.activeDragToken = nil
+            }
+        }
+
+        private func synchronizeSelection() {
+            guard let collectionView else { return }
+            let indexPaths = Set(parent.records.enumerated().compactMap { index, record in
+                parent.selectedAssetIDs.contains(record.id)
+                    ? IndexPath(item: index, section: 0)
+                    : nil
+            })
+            guard collectionView.selectionIndexPaths != indexPaths else { return }
+            isSynchronizingSelection = true
+            collectionView.selectionIndexPaths = indexPaths
+            isSynchronizingSelection = false
+        }
+
+        private func publishSelection(changedIndexPaths: Set<IndexPath>) {
+            guard !isSynchronizingSelection, let collectionView else { return }
+            let ids = assetIDs(for: collectionView.selectionIndexPaths)
+            let anchorID = changedIndexPaths
+                .sorted(by: { $0.item < $1.item })
+                .last
+                .flatMap { indexPath in
+                    indexPath.item < parent.records.count ? parent.records[indexPath.item].id : nil
+                }
+            parent.onSelectionChanged(ids, anchorID ?? ids.first)
+        }
+
+        private func assetIDs(for indexPaths: Set<IndexPath>) -> Set<AssetID> {
+            Set(indexPaths.compactMap { indexPath in
+                indexPath.item < parent.records.count ? parent.records[indexPath.item].id : nil
+            })
+        }
+    }
+}
+
+@MainActor
+private final class AssetCollectionViewController: NSViewController {
+    let collectionView = NSCollectionView()
+
+    override func loadView() {
+        let layout = NSCollectionViewFlowLayout()
+        layout.sectionInset = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        layout.minimumInteritemSpacing = 16
+        layout.minimumLineSpacing = 18
+
+        collectionView.collectionViewLayout = layout
+        collectionView.isSelectable = true
+        collectionView.allowsMultipleSelection = true
+        collectionView.backgroundColors = [.clear]
+        collectionView.focusRingType = .exterior
+
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = collectionView
+        view = scrollView
+    }
+}
+
+@MainActor
+private final class AssetCollectionItem: NSCollectionViewItem {
+    private let thumbnailView = NSImageView()
+    private let titleField = NSTextField(labelWithString: "")
+    private let progressIndicator = NSProgressIndicator()
+    private let placeholderField = NSTextField(labelWithString: "")
+
+    override var isSelected: Bool {
+        didSet { updateSelectionAppearance() }
     }
 
-    @ViewBuilder
-    private func thumbnailFailure(_ symbol: String, label: String) -> some View {
-        VStack(spacing: 5) {
-            Image(systemName: symbol)
-            Text(label)
-                .font(.caption2)
+    override func loadView() {
+        view = NSView()
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 9
+
+        thumbnailView.translatesAutoresizingMaskIntoConstraints = false
+        thumbnailView.imageScaling = .scaleProportionallyUpOrDown
+        thumbnailView.wantsLayer = true
+        thumbnailView.layer?.cornerRadius = 7
+        thumbnailView.layer?.masksToBounds = true
+        thumbnailView.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.08).cgColor
+
+        titleField.translatesAutoresizingMaskIntoConstraints = false
+        titleField.lineBreakMode = .byTruncatingMiddle
+        titleField.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        titleField.maximumNumberOfLines = 1
+
+        progressIndicator.translatesAutoresizingMaskIntoConstraints = false
+        progressIndicator.style = .spinning
+        progressIndicator.controlSize = .small
+
+        placeholderField.translatesAutoresizingMaskIntoConstraints = false
+        placeholderField.alignment = .center
+        placeholderField.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        placeholderField.textColor = .secondaryLabelColor
+        placeholderField.maximumNumberOfLines = 2
+
+        for subview in [thumbnailView, titleField, progressIndicator, placeholderField] {
+            view.addSubview(subview)
         }
-        .foregroundStyle(.secondary)
+        NSLayoutConstraint.activate([
+            thumbnailView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 5),
+            thumbnailView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -5),
+            thumbnailView.topAnchor.constraint(equalTo: view.topAnchor, constant: 5),
+            titleField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
+            titleField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -6),
+            titleField.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -5),
+            titleField.topAnchor.constraint(equalTo: thumbnailView.bottomAnchor, constant: 6),
+            progressIndicator.centerXAnchor.constraint(equalTo: thumbnailView.centerXAnchor),
+            progressIndicator.centerYAnchor.constraint(equalTo: thumbnailView.centerYAnchor),
+            placeholderField.centerXAnchor.constraint(equalTo: thumbnailView.centerXAnchor),
+            placeholderField.centerYAnchor.constraint(equalTo: thumbnailView.centerYAnchor),
+            placeholderField.widthAnchor.constraint(lessThanOrEqualTo: thumbnailView.widthAnchor, constant: -12)
+        ])
     }
+
+    func configure(record: AssetGridRecord, state: AssetThumbnailState?, imageSize: Double) {
+        titleField.stringValue = record.displayName
+        view.setAccessibilityLabel(record.displayName)
+        view.setAccessibilityIdentifier("asset.\(record.id.description)")
+        thumbnailView.image = nil
+        placeholderField.stringValue = ""
+        placeholderField.isHidden = true
+        progressIndicator.stopAnimation(nil)
+        progressIndicator.isHidden = true
+
+        switch state {
+        case let .ready(payload):
+            if let image = NSImage(data: payload.encodedData) {
+                thumbnailView.image = image
+            } else {
+                showPlaceholder(symbol: "exclamationmark.triangle", label: "Corrupt thumbnail")
+            }
+        case .missing:
+            showPlaceholder(symbol: "questionmark.folder", label: "Original missing")
+        case .corrupt:
+            showPlaceholder(symbol: "exclamationmark.triangle", label: "Image unreadable")
+        case .loading:
+            progressIndicator.isHidden = false
+            progressIndicator.startAnimation(nil)
+        case nil:
+            showPlaceholder(symbol: "photo", label: "")
+        }
+        updateSelectionAppearance()
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        thumbnailView.image = nil
+        progressIndicator.stopAnimation(nil)
+        placeholderField.stringValue = ""
+    }
+
+    private func showPlaceholder(symbol: String, label: String) {
+        let symbolText = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        thumbnailView.image = symbolText
+        thumbnailView.contentTintColor = .secondaryLabelColor
+        if !label.isEmpty {
+            placeholderField.stringValue = label
+            placeholderField.isHidden = false
+        }
+    }
+
+    private func updateSelectionAppearance() {
+        view.layer?.backgroundColor = isSelected
+            ? NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
+            : NSColor.clear.cgColor
+        view.layer?.borderWidth = isSelected ? 2 : 0
+        view.layer?.borderColor = NSColor.controlAccentColor.cgColor
+    }
+}
+
+private extension NSUserInterfaceItemIdentifier {
+    static let assetCollectionItem = Self("FramebaseAssetCollectionItem")
 }

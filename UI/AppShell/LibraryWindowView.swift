@@ -36,6 +36,16 @@ struct LibraryWindowView: View {
                     Task {
                         await model.reparentFolder(drop.sourceFolderID, to: drop.destinationParentFolderID)
                     }
+                },
+                validateAssetDrop: { drop in
+                    model.canMoveAssets(drop.assetIDs, to: drop.destinationFolderID)
+                        ? .allowed
+                        : .rejected
+                },
+                onMoveAssets: { drop in
+                    Task {
+                        await model.moveAssets(drop.assetIDs, to: drop.destinationFolderID)
+                    }
                 }
             )
                 .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 320)

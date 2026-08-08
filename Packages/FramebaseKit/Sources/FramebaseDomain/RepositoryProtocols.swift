@@ -10,6 +10,7 @@ public protocol AssetRepository: Sendable {
         limit: Int
     ) async throws -> AssetPage
     func asset(id: AssetID) async throws -> Asset?
+    func assets(ids: Set<AssetID>) async throws -> [Asset]
     func observe(matching query: AssetQuery) -> AsyncThrowingStream<CatalogChange, any Error>
     func updateDisplayName(_ displayName: String, for assetID: AssetID) async throws
     func updateRating(_ rating: AssetRating, for assetIDs: Set<AssetID>) async throws
