@@ -17,6 +17,7 @@ struct FoundationAssetBrowser: View {
                 } description: {
                     Text("No assets match this destination.")
                 }
+                .accessibilityIdentifier("assetBrowser.empty.\(model.navigationTarget.title)")
             }
         }
         .navigationTitle(model.navigationTarget.title)

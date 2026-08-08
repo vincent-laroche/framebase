@@ -60,6 +60,21 @@ final class AppContainer {
         }
         didAttemptLibraryRestore = true
 
+#if DEBUG
+        if let testPath = ProcessInfo.processInfo.environment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] {
+            libraryState = .opening
+            do {
+                let layout = try await libraryCoordinator.createLibrary(
+                    at: URL(fileURLWithPath: testPath, isDirectory: true)
+                )
+                try await activateLibrary(layout, persistSelection: false)
+            } catch {
+                libraryState = .failed(error.localizedDescription)
+            }
+            return
+        }
+#endif
+
         guard let persistedPath = preferences.string(forKey: Self.libraryRootPreferenceKey) else {
             return
         }
@@ -90,7 +105,7 @@ final class AppContainer {
         }
     }
 
-    private func activateLibrary(_ layout: LibraryPackageLayout) async throws {
+    private func activateLibrary(_ layout: LibraryPackageLayout, persistSelection: Bool = true) async throws {
         let catalog = try CatalogDatabase(catalogURL: layout.catalogDatabaseURL)
         let blobStore = try ManagedAssetBlobStore(
             originalsDirectoryURL: layout.originalsDirectoryURL,
@@ -107,7 +122,9 @@ final class AppContainer {
         albumRepository = catalog.albums
         assetBlobStore = blobStore
         libraryRootURL = layout.rootURL
-        preferences.set(layout.rootURL.path, forKey: Self.libraryRootPreferenceKey)
+        if persistSelection {
+            preferences.set(layout.rootURL.path, forKey: Self.libraryRootPreferenceKey)
+        }
         libraryState = .ready(catalog.catalogID)
     }
 }

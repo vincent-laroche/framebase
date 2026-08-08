@@ -3,9 +3,17 @@ import SwiftUI
 @MainActor
 struct LibraryCommandActions {
     let importAssets: () -> Void
+    let createFolder: () -> Void
+    let createSubfolder: () -> Void
+    let undo: () -> Void
+    let redo: () -> Void
     let selectAll: () -> Void
     let toggleInspector: () -> Void
     let canImport: Bool
+    let canCreateFolder: Bool
+    let canCreateSubfolder: Bool
+    let canUndo: Bool
+    let canRedo: Bool
     let canSelectAll: Bool
 }
 
@@ -24,7 +32,35 @@ struct FramebaseCommands: Commands {
     @FocusedValue(\.libraryCommandActions) private var actions
 
     var body: some Commands {
+        CommandGroup(replacing: .undoRedo) {
+            Button("Undo") {
+                actions?.undo()
+            }
+            .keyboardShortcut("z")
+            .disabled(actions?.canUndo != true)
+
+            Button("Redo") {
+                actions?.redo()
+            }
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+            .disabled(actions?.canRedo != true)
+        }
+
         CommandGroup(after: .newItem) {
+            Button("New Folder") {
+                actions?.createFolder()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+            .disabled(actions?.canCreateFolder != true)
+
+            Button("New Subfolder") {
+                actions?.createSubfolder()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option, .shift])
+            .disabled(actions?.canCreateSubfolder != true)
+
+            Divider()
+
             Button("Import Assets…") {
                 actions?.importAssets()
             }

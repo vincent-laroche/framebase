@@ -179,6 +179,13 @@ struct CatalogDatabaseTests {
         try await database.folders.renameFolder(other.id, to: FolderName("Archive"))
         try await database.folders.reparentFolder(other.id, to: root.id)
 
+        let beforeDeletion = try await database.folders.treeSnapshot()
+        let expectedDeletedFolders = Dictionary(
+            uniqueKeysWithValues: beforeDeletion.folders
+                .filter { [root.id, child.id, other.id].contains($0.id) }
+                .map { ($0.id, $0) }
+        )
+
         do {
             try await database.folders.reparentFolder(root.id, to: child.id)
             Issue.record("Expected descendant cycle rejection")
@@ -198,6 +205,7 @@ struct CatalogDatabaseTests {
         let receipt = try await database.folders.deletePreservingAssets(root.id)
 
         #expect(Set(receipt.deletedFolders.map(\.id)) == [root.id, child.id, other.id])
+        #expect(Dictionary(uniqueKeysWithValues: receipt.deletedFolders.map { ($0.id, $0) }) == expectedDeletedFolders)
         #expect(receipt.priorAssetAssignments[rootAsset.id] == root.id)
         #expect(receipt.priorAssetAssignments[childAsset.id] == child.id)
         #expect(try await database.assets.count(matching: AssetQuery(scope: .inbox)) == 2)
@@ -209,6 +217,116 @@ struct CatalogDatabaseTests {
         #expect(restoredSnapshot.childrenByParent[root.id] == [child.id, other.id])
         #expect(try await database.assets.asset(id: rootAsset.id)?.parentFolderID == root.id)
         #expect(try await database.assets.asset(id: childAsset.id)?.parentFolderID == child.id)
+    }
+
+    @Test("Folder mutations reject invalid parents and every Inbox mutation")
+    func folderInvalidParentsAndInboxImmutability() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let root = try await database.folders.createFolder(named: FolderName("Root"), in: nil)
+        let missing = FolderID()
+
+        do {
+            _ = try await database.folders.createFolder(named: FolderName("Orphan"), in: missing)
+            Issue.record("Expected invalid create parent rejection")
+        } catch {
+            #expect(error as? CatalogError == .invalidFolderParent(missing))
+        }
+        do {
+            try await database.folders.reparentFolder(root.id, to: missing)
+            Issue.record("Expected invalid reparent target rejection")
+        } catch {
+            #expect(error as? CatalogError == .invalidFolderParent(missing))
+        }
+        do {
+            _ = try await database.folders.createFolder(named: FolderName("Inside Inbox"), in: database.inboxID)
+            Issue.record("Expected Inbox child rejection")
+        } catch {
+            #expect(error as? CatalogError == .invalidFolderParent(database.inboxID))
+        }
+        do {
+            try await database.folders.renameFolder(database.inboxID, to: FolderName("Renamed"))
+            Issue.record("Expected Inbox rename rejection")
+        } catch {
+            #expect(error as? CatalogError == .systemFolderImmutable(database.inboxID))
+        }
+        do {
+            _ = try await database.folders.deletePreservingAssets(database.inboxID)
+            Issue.record("Expected Inbox deletion rejection")
+        } catch {
+            #expect(error as? CatalogError == .systemFolderImmutable(database.inboxID))
+        }
+        do {
+            try await database.folders.reparentFolder(root.id, to: root.id)
+            Issue.record("Expected self-parenting rejection")
+        } catch {
+            #expect(error as? CatalogError == .folderCycle)
+        }
+
+        let snapshot = try await database.folders.treeSnapshot()
+        #expect(snapshot.roots == [root.id])
+        #expect(snapshot.folders.first(where: { $0.id == database.inboxID })?.name.rawValue == "Inbox")
+    }
+
+    @Test("Sibling uniqueness and no-op reparenting preserve existing state")
+    func folderSiblingUniquenessAndNoOp() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let firstRoot = try await database.folders.createFolder(named: FolderName("First"), in: nil)
+        let secondRoot = try await database.folders.createFolder(named: FolderName("Second"), in: nil)
+        let firstChild = try await database.folders.createFolder(named: FolderName("Shared"), in: firstRoot.id)
+        let secondChild = try await database.folders.createFolder(named: FolderName("shared"), in: secondRoot.id)
+
+        await expectDatabaseFailure {
+            _ = try await database.folders.createFolder(named: FolderName("SHARED"), in: firstRoot.id)
+        }
+        await expectDatabaseFailure {
+            try await database.folders.renameFolder(secondRoot.id, to: FolderName("first"))
+        }
+        await expectDatabaseFailure {
+            try await database.folders.reparentFolder(secondChild.id, to: firstRoot.id)
+        }
+
+        let beforeNoOp = try #require(
+            try await database.folders.treeSnapshot().folders.first(where: { $0.id == firstChild.id })
+        )
+        try await database.folders.reparentFolder(firstChild.id, to: firstRoot.id)
+        let afterNoOp = try #require(
+            try await database.folders.treeSnapshot().folders.first(where: { $0.id == firstChild.id })
+        )
+        #expect(afterNoOp == beforeNoOp)
+
+        let snapshot = try await database.folders.treeSnapshot()
+        #expect(snapshot.roots == [firstRoot.id, secondRoot.id])
+        #expect(snapshot.childrenByParent[firstRoot.id] == [firstChild.id])
+        #expect(snapshot.childrenByParent[secondRoot.id] == [secondChild.id])
+        #expect(snapshot.folders.first(where: { $0.id == secondRoot.id })?.name.rawValue == "Second")
+    }
+
+    @Test("Folder observations preserve gap-sort sibling ordering")
+    func folderObservationOrdering() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        var iterator = database.folders.observeTree().makeAsyncIterator()
+        _ = try #require(try await iterator.next())
+
+        let firstRoot = try await database.folders.createFolder(named: FolderName("Zulu"), in: nil)
+        let firstSnapshot = try #require(try await iterator.next())
+        #expect(firstSnapshot.roots == [firstRoot.id])
+        let secondRoot = try await database.folders.createFolder(named: FolderName("Alpha"), in: nil)
+        let secondSnapshot = try #require(try await iterator.next())
+        #expect(secondSnapshot.roots == [firstRoot.id, secondRoot.id])
+
+        let firstChild = try await database.folders.createFolder(named: FolderName("Zulu Child"), in: firstRoot.id)
+        _ = try #require(try await iterator.next())
+        let secondChild = try await database.folders.createFolder(named: FolderName("Alpha Child"), in: firstRoot.id)
+        let childrenSnapshot = try #require(try await iterator.next())
+        #expect(childrenSnapshot.childrenByParent[firstRoot.id] == [firstChild.id, secondChild.id])
+
+        try await database.folders.reparentFolder(secondChild.id, to: secondRoot.id)
+        let reparentedSnapshot = try #require(try await iterator.next())
+        #expect(reparentedSnapshot.childrenByParent[firstRoot.id] == [firstChild.id])
+        #expect(reparentedSnapshot.childrenByParent[secondRoot.id] == [secondChild.id])
     }
 
     @Test("Failed folder restore rolls back the entire hierarchy")
