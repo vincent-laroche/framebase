@@ -21,6 +21,7 @@ The repository now contains:
 - `swift test --package-path Packages/FramebaseKit` passes 21 tests in 5 suites.
 - `xcodebuild ... test -only-testing:FramebaseUITests` passes the foreground-window launch test.
 - `./script/build_and_run.sh --verify` builds, launches, and confirms the app remains running.
+- GitHub Actions run `31253440128` passes package tests, the app/UI-test-target build, and the app smoke launch for commit `e0f3e9a`.
 - `git diff --check` passes.
 
 ## Active blocker
@@ -38,4 +39,4 @@ None for Milestone 2. Phase one remains intentionally local-only: no networking,
 
 - 2026-08-08 — Codex primary agent — Implemented the Milestone 0 repository, package, shared contracts, native app shell, Xcode project, UI-test scaffold, build/run entrypoint, Codex Run action, and CI workflow. Package build and direct application type-check pass. Full Xcode tests/build/launch remain gated by the local Xcode installation; remote CI is the next verification surface.
 - 2026-08-08 — Codex primary agent — Full-Xcode CI passed on commit `a6a68db`: package tests, app/UI-test-target build, and application process smoke launch all succeeded. The foundation is pushed to `main`. Milestone 1 remains intentionally blocked until full Xcode 26 is installed and the project-local `--verify` launch succeeds on this Mac.
-- 2026-08-08 — Codex primary agent with catalog and media sub-agents — Verified Xcode 26.6 license/first-launch state and closed the local Milestone 0 gate. Implemented Milestone 1 catalog persistence, managed-original storage, first-launch create/open orchestration, staged-file recovery, service integration, and the runnable UI-test scheme. Local verification passes 21 package tests, 1 native UI launch test, app build/launch verification, and whitespace checks. Next: commit/push, confirm CI, then begin Milestone 2.
+- 2026-08-08 — Codex primary agent with catalog and media sub-agents — Verified Xcode 26.6 license/first-launch state and closed the local Milestone 0 gate. Implemented Milestone 1 catalog persistence, managed-original storage, first-launch create/open orchestration, staged-file recovery, service integration, and the runnable UI-test scheme. Commit `e0f3e9a` is pushed to `main`; local verification passes 21 package tests, 1 native UI launch test, app build/launch verification, and whitespace checks, and GitHub Actions run `31253440128` is green. Next: begin Milestone 2.
