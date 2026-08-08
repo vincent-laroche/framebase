@@ -68,6 +68,9 @@ struct LibraryWindowView: View {
             model.isInspectorVisible = storedInspectorVisible
             model.thumbnailSize = storedThumbnailSize
         }
+        .task {
+            await model.container.restoreLibraryIfAvailable()
+        }
     }
 
     private var navigationBinding: Binding<NavigationTarget?> {

@@ -21,6 +21,9 @@
 		A1000000000000000000000C /* FramebaseDomain in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000001 /* FramebaseDomain */; };
 		A1000000000000000000000D /* FramebaseCatalog in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000002 /* FramebaseCatalog */; };
 		A1000000000000000000000E /* FramebaseMedia in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000003 /* FramebaseMedia */; };
+		A1000000000000000000000F /* LibraryPackageCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* LibraryPackageCoordinator.swift */; };
+		A10000000000000000000010 /* LibraryPanelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* LibraryPanelService.swift */; };
+		A10000000000000000000011 /* LibrarySetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* LibrarySetupView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -47,6 +50,9 @@
 		A2000000000000000000000B /* FramebaseUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FramebaseUITests.swift; sourceTree = "<group>"; };
 		A2000000000000000000000C /* Framebase.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Framebase.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000000000000000000000D /* FramebaseUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FramebaseUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000000000000000000000E /* LibraryPackageCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryPackageCoordinator.swift; sourceTree = "<group>"; };
+		A2000000000000000000000F /* LibraryPanelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryPanelService.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 /* LibrarySetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySetupView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -87,6 +93,8 @@
 				A20000000000000000000001 /* FramebaseApp.swift */,
 				A20000000000000000000002 /* AppContainer.swift */,
 				A20000000000000000000003 /* FramebaseCommands.swift */,
+				A2000000000000000000000E /* LibraryPackageCoordinator.swift */,
+				A2000000000000000000000F /* LibraryPanelService.swift */,
 				A20000000000000000000004 /* LibraryWindowModel.swift */,
 			);
 			path = App;
@@ -108,6 +116,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000005 /* LibraryWindowView.swift */,
+				A20000000000000000000010 /* LibrarySetupView.swift */,
 			);
 			path = AppShell;
 			sourceTree = "<group>";
@@ -287,6 +296,9 @@
 				A10000000000000000000007 /* FoundationAssetBrowser.swift in Sources */,
 				A10000000000000000000008 /* FoundationInspector.swift in Sources */,
 				A10000000000000000000009 /* FramebaseSettingsView.swift in Sources */,
+				A1000000000000000000000F /* LibraryPackageCoordinator.swift in Sources */,
+				A10000000000000000000010 /* LibraryPanelService.swift in Sources */,
+				A10000000000000000000011 /* LibrarySetupView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

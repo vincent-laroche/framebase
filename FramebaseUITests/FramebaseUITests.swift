@@ -6,6 +6,6 @@ final class FramebaseUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        XCTAssertTrue(app.windows["Framebase"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
     }
 }

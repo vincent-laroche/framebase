@@ -28,6 +28,10 @@ Use `./script/build_and_run.sh` as the only app build/run entrypoint once availa
 
 The app target requires full Xcode 26. Do not claim the Xcode build or launch gate passed when only Command Line Tools are selected.
 
+## Cloudflare
+
+Phase one has no networking or cloud dependency. If later approved Framebase work requires Cloudflare, read and follow `/Users/vMac/.codex/skills/hair-solutions-cloudflare-ops/SKILL.md`; keep any deployment, DNS, Access, or credential change approval-gated.
+
 ## Session handoff
 
 Update `PROJECT.md` at the end of every implementation session with the current state, verification performed, blockers, next step, and agent name. Only change this file when a durable rule or path changes.
