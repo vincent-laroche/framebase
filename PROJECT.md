@@ -2,7 +2,7 @@
 
 ## Current status
 
-Milestone 4 — professional asset browser — is implemented and locally verified. All planned Milestone 5 user-facing surfaces are now implemented; the final hardening/acceptance gate remains active.
+Milestone 5 — inspector, hardening, and finish gate — is implemented and locally verified. The phase-one implementation plan is complete for regular local use, without distribution-readiness claims.
 
 The repository now contains:
 
@@ -28,22 +28,23 @@ The repository now contains:
 
 - Xcode 26.6 build 17F113 is installed and selected at `/Applications/Xcode.app/Contents/Developer`.
 - `xcodebuild -license check` and `xcodebuild -checkFirstLaunchStatus` pass.
-- `swift test --package-path Packages/FramebaseKit` passes 30 tests in 6 suites.
+- `swift test --package-path Packages/FramebaseKit` passes 31 tests in 6 suites.
 - `xcodebuild ... test -only-testing:FramebaseUITests` passes the full UI suite, including the create/rename/delete/undo/redo folder workflow.
 - `./script/build_and_run.sh --verify` builds, launches, and confirms the app remains running.
+- The release-mode 100,000-asset acceptance test passes in 2.404 seconds total including fixture creation; both the first 200-record page and full sorted-ID query stay below their two-second gates.
+- Source audit finds no networking, Cloudflare, authentication, OCR, video, or permanent-deletion implementation in the app/package sources.
 - GitHub Actions run `31253440128` passes package tests, the app/UI-test-target build, and the app smoke launch for commit `e0f3e9a`.
 - `git diff --check` passes.
 
 ## Active blocker
 
-No implementation blocker. The remaining work is the Milestone 5 finish gate: large-catalog performance evidence, broader interaction/accessibility checks, diagnostics/logging review, and final acceptance documentation. Phase one remains intentionally local-only: no networking, authentication, Cloudflare, sync, AI, OCR, video, or permanent deletion has entered scope.
+None. Phase one remains intentionally local-only: no networking, authentication, Cloudflare, sync, AI, OCR, video, or permanent deletion has entered scope.
 
 ## Next
 
-1. Run the Milestone 5 large synthetic-catalog and responsiveness acceptance checks.
-2. Complete keyboard-only, Light/Dark, window restoration, drag/drop, and accessibility passes.
-3. Review diagnostics/logging coverage and run a final source audit for deferred/network features.
-4. Record the final acceptance result without claiming sandboxing, notarization, signing, or distribution readiness.
+1. Use the app with a real personal photo set and record any practical workflow friction as follow-up work.
+2. Add only narrowly justified polish or diagnostics based on that real-use pass.
+3. Keep sandboxing, signing, notarization, distribution, networking, sync, AI, OCR, and video outside scope unless a new plan explicitly introduces them.
 
 ## Session log
 
@@ -53,3 +54,4 @@ No implementation blocker. The remaining work is the Milestone 5 finish gate: la
 - 2026-08-08 — Codex primary agent with catalog and AppKit sub-agents — Completed Milestone 2 with the native source-list sidebar, observed folder/album state, expansion persistence, keyboard and context-menu operations, validated drag/reparent behavior, delete-to-Inbox confirmation, and deterministic undo/redo. Local verification passes 24 package tests, the full native UI suite including create/rename/delete/undo/redo, app build/launch verification, and whitespace checks. Folder-edge polishing is intentionally deferred unless it blocks regular use; next is Milestone 3 import and media integration.
 - 2026-08-08 — Codex primary agent — Completed Milestone 3 with native-panel and Finder-drop importing, ImageIO decode validation and metadata extraction, atomic catalog integration with cancellation/rollback/failure reporting, bounded thumbnail/preview caches, and visible missing/corrupt states. Local verification passes 30 package tests, the full native UI suite, the app build, and whitespace checks. Cloudflare remains unused because this phase is deliberately local-only. Next: native Milestone 4 asset-browser behavior.
 - 2026-08-08 — Codex primary agent — Completed Milestone 4 and the functional Milestone 5 surfaces: native collection-view browsing, reusable thumbnail cells, stable multi-selection, keyboard/prefetch/paging behavior, catalog-only multi-asset folder drops, detailed single/multi inspector state, favorites/ratings, and working cache/library settings. Package tests, the full UI suite, app build/launch verification, and whitespace checks pass. Next: final large-catalog, accessibility, restoration, diagnostics, and scope acceptance evidence.
+- 2026-08-08 — Codex primary agent — Closed the Milestone 5 finish gate with chunked large-selection catalog mutations, bounded inspector detail loading, unified import/catalog/thumbnail logging and signposts, a release-mode 100,000-asset acceptance test, full package/UI/build/launch verification, and a deferred-scope source audit. Framebase is ready for regular local use under the implementation plan; no distribution, sandboxing, signing, notarization, cloud, or sync readiness is claimed.

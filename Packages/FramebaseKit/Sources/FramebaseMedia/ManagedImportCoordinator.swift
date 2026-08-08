@@ -1,5 +1,6 @@
 import Foundation
 import FramebaseDomain
+import OSLog
 
 public enum ManagedImportCoordinatorError: Error, LocalizedError, Sendable {
     case importAlreadyInProgress
@@ -30,6 +31,8 @@ public actor ManagedImportCoordinator: ImportCoordinator {
     private let blobStore: any AssetBlobStore
     private let metadataExtractor: any MetadataExtractor
     private let insertIntoCatalog: CatalogInsert
+    private let logger = Logger(subsystem: "com.vincentlaroche.framebase", category: "Import")
+    private let signposter = OSSignposter(subsystem: "com.vincentlaroche.framebase", category: "Import")
     private var activeImportID: UUID?
     private var cancellationRequestedFor: UUID?
 
@@ -52,11 +55,14 @@ public actor ManagedImportCoordinator: ImportCoordinator {
         }
 
         let importID = UUID()
+        let interval = signposter.beginInterval("Import Batch")
+        logger.info("Starting local import batch with \(request.sourceURLs.count) source file(s)")
         activeImportID = importID
         cancellationRequestedFor = nil
         defer {
             activeImportID = nil
             cancellationRequestedFor = nil
+            signposter.endInterval("Import Batch", interval)
         }
 
         let sources = request.sourceURLs

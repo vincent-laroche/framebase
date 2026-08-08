@@ -176,6 +176,63 @@ struct CatalogDatabaseTests {
         #expect(try await database.assets.count(matching: AssetQuery(scope: .allAssets)) == 0)
     }
 
+    @Test("A 100,000-asset catalog pages and sorts within the local acceptance budget")
+    func largeCatalogPerformance() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let metadataData = try JSONEncoder().encode(AssetMetadata())
+        let metadataJSON = try #require(String(data: metadataData, encoding: .utf8))
+
+        try await database.databasePool.write { db in
+            let statement = try db.makeStatement(sql: """
+                INSERT INTO assets (
+                    id, filename, display_name, parent_folder_id, storage_key, media_type,
+                    width, height, file_size, created_at_ms, modified_at_ms, imported_at_ms,
+                    updated_at_ms, favorite, rating, metadata_json, original_available
+                ) VALUES (?, ?, ?, ?, ?, 'stillImage', 1200, 800, ?, ?, ?, ?, ?, 0, 0, ?, 1)
+                """)
+            for index in 0..<100_000 {
+                let id = UUID().uuidString.lowercased()
+                let name = String(format: "asset-%06d.jpg", index)
+                try statement.execute(arguments: [
+                    id,
+                    name,
+                    name,
+                    database.inboxID.description,
+                    "\(id.prefix(2))/\(id).jpg",
+                    1_000 + index,
+                    index,
+                    index,
+                    index,
+                    index,
+                    metadataJSON
+                ])
+            }
+        }
+
+        let clock = ContinuousClock()
+        let pageStart = clock.now
+        let page = try await database.assets.page(
+            matching: AssetQuery(scope: .allAssets),
+            sortedBy: .defaultSort,
+            offset: 0,
+            limit: 200
+        )
+        let pageDuration = pageStart.duration(to: clock.now)
+        #expect(page.records.count == 200)
+        #expect(page.totalCount == 100_000)
+        #expect(pageDuration < .seconds(2))
+
+        let sortStart = clock.now
+        let ids = try await database.assets.orderedIDs(
+            matching: AssetQuery(scope: .allAssets),
+            sortedBy: AssetSort(key: .displayName, direction: .descending)
+        )
+        let sortDuration = sortStart.duration(to: clock.now)
+        #expect(ids.count == 100_000)
+        #expect(sortDuration < .seconds(2))
+    }
+
     @Test("Folder operations reject cycles and preserve assets through delete and restore")
     func folderTreeDeletionAndRestore() async throws {
         let temporary = try TemporaryCatalog()

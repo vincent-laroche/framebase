@@ -1,17 +1,22 @@
 import Foundation
 import FramebaseDomain
 import GRDB
+import OSLog
 
 public struct CatalogAssetRepository: AssetRepository, Sendable {
     private let databasePool: DatabasePool
     private static let maximumPageSize = 500
+    private static let signposter = OSSignposter(
+        subsystem: "com.vincentlaroche.framebase",
+        category: "Catalog Queries"
+    )
 
     init(databasePool: DatabasePool) {
         self.databasePool = databasePool
     }
 
     public func count(matching query: AssetQuery) async throws -> Int {
-        try await databasePool.read { db in
+        return try await databasePool.read { db in
             let statement = Self.scopeStatement(query.scope)
             return try Int.fetchOne(
                 db,
@@ -22,7 +27,9 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
     }
 
     public func orderedIDs(matching query: AssetQuery, sortedBy sort: AssetSort) async throws -> [AssetID] {
-        try await databasePool.read { db in
+        let interval = Self.signposter.beginInterval("Ordered Asset IDs")
+        defer { Self.signposter.endInterval("Ordered Asset IDs", interval) }
+        return try await databasePool.read { db in
             let statement = Self.scopeStatement(query.scope)
             let values = try String.fetchAll(
                 db,
@@ -43,6 +50,8 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
             throw CatalogError.invalidPage(offset: offset, limit: limit)
         }
         let boundedLimit = min(limit, Self.maximumPageSize)
+        let interval = Self.signposter.beginInterval("Asset Page")
+        defer { Self.signposter.endInterval("Asset Page", interval) }
 
         return try await databasePool.read { db in
             let statement = Self.scopeStatement(query.scope)

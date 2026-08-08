@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import FramebaseDomain
 import ImageIO
+import OSLog
 import UniformTypeIdentifiers
 
 public enum ImageIOThumbnailProviderError: Error, LocalizedError, Sendable {
@@ -45,6 +46,7 @@ public actor ImageIOThumbnailProvider: ThumbnailProvider {
     private let fileManager: FileManager
     private let diskCacheByteLimit: Int64
     private let memoryCache = NSCache<NSString, ThumbnailCacheBox>()
+    private let signposter = OSSignposter(subsystem: "com.vincentlaroche.framebase", category: "Thumbnails")
     private var cancelledRequestIDs: Set<ThumbnailRequestID> = []
 
     public init(
@@ -138,6 +140,8 @@ public actor ImageIOThumbnailProvider: ThumbnailProvider {
 
         let sourceURL = try await blobStore.resolve(request.storageKey)
         try checkCancellation(request.id)
+        let interval = signposter.beginInterval("Thumbnail Decode")
+        defer { signposter.endInterval("Thumbnail Decode", interval) }
         let generated = try generatePayload(from: sourceURL, request: request)
         try checkCancellation(request.id)
         try persist(generated, at: diskURL)
