@@ -16,7 +16,7 @@ struct FoundationAssetBrowser: View {
             case .ready:
                 if model.orderedVisibleAssetIDs.isEmpty {
                     ContentUnavailableView {
-                        Label(model.navigationTarget.title, systemImage: "photo.stack")
+                        Label(model.navigationTitle, systemImage: "photo.stack")
                     } description: {
                         Text("No assets match this destination.")
                     }
@@ -36,13 +36,14 @@ struct FoundationAssetBrowser: View {
                             model.requestThumbnail(for: record, displayScale: scale)
                         },
                         onCancelThumbnail: model.cancelThumbnail,
-                        onNearEnd: model.loadNextAssetPageIfNeeded
+                        onNearEnd: model.loadNextAssetPageIfNeeded,
+                        onSelectAll: model.selectAllVisibleAssets
                     )
                     .accessibilityIdentifier("assetBrowser.grid")
                 }
             }
         }
-        .navigationTitle(model.navigationTarget.title)
+        .navigationTitle(model.navigationTitle)
     }
 }
 
@@ -78,6 +79,7 @@ private struct NativeAssetCollection: NSViewControllerRepresentable {
     let onRequestThumbnail: (AssetGridRecord, Double) -> Void
     let onCancelThumbnail: (AssetID) -> Void
     let onNearEnd: (Int) -> Void
+    let onSelectAll: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -95,6 +97,9 @@ private struct NativeAssetCollection: NSViewControllerRepresentable {
         collectionView.prefetchDataSource = context.coordinator
         collectionView.registerForDraggedTypes([.framebaseAssets])
         collectionView.setDraggingSourceOperationMask(.move, forLocal: true)
+        collectionView.onSelectAll = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onSelectAll()
+        }
         context.coordinator.collectionView = collectionView
         context.coordinator.apply(parent: self, reloadAll: true)
         return controller
@@ -304,9 +309,31 @@ private struct NativeAssetCollection: NSViewControllerRepresentable {
     }
 }
 
+/// `NSCollectionView` answers `selectAll:` from the responder chain, so ⌘A
+/// selects only the cells it has currently realized while the Assets ▸ Select
+/// All menu item selects every asset in scope. Routing the responder action out
+/// puts the shortcut and the menu item on one code path, so a paged folder
+/// selects all of its assets rather than just the loaded page.
+///
+/// Note: ⌘A was also observed doing nothing at all against a large real folder.
+/// That symptom is not reproduced by the UI suite and is not explained by this
+/// change alone.
+@MainActor
+private final class AssetCollectionView: NSCollectionView {
+    var onSelectAll: (() -> Void)?
+
+    override func selectAll(_ sender: Any?) {
+        guard let onSelectAll else {
+            super.selectAll(sender)
+            return
+        }
+        onSelectAll()
+    }
+}
+
 @MainActor
 private final class AssetCollectionViewController: NSViewController {
-    let collectionView = NSCollectionView()
+    let collectionView = AssetCollectionView()
 
     override func loadView() {
         let layout = NSCollectionViewFlowLayout()
@@ -355,6 +382,16 @@ private final class AssetCollectionItem: NSCollectionViewItem {
 
         thumbnailView.translatesAutoresizingMaskIntoConstraints = false
         thumbnailView.imageScaling = .scaleProportionallyUpOrDown
+        // An image view takes its intrinsic size from the image it holds. At
+        // default priorities a full-size thumbnail outranks these constraints,
+        // so the picture spilled past the cell background and pushed the
+        // filename out of view: only cells whose image happened to be smaller
+        // than the cell showed a label. Letting the layout win keeps every cell
+        // the same shape regardless of what it is displaying.
+        thumbnailView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        thumbnailView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        thumbnailView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        thumbnailView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         thumbnailView.wantsLayer = true
         thumbnailView.layer?.cornerRadius = 7
         thumbnailView.layer?.masksToBounds = true
@@ -364,6 +401,10 @@ private final class AssetCollectionItem: NSCollectionViewItem {
         titleField.lineBreakMode = .byTruncatingMiddle
         titleField.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         titleField.maximumNumberOfLines = 1
+        // The filename keeps its line; long names truncate instead of forcing
+        // the cell to grow.
+        titleField.setContentCompressionResistancePriority(.required, for: .vertical)
+        titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         progressIndicator.translatesAutoresizingMaskIntoConstraints = false
         progressIndicator.style = .spinning

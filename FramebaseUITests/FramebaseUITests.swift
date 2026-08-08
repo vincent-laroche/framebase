@@ -67,6 +67,15 @@ final class FramebaseUITests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(sidebarItem(named: "Projects", in: app).waitForExistence(timeout: 5))
 
+        // Selecting a folder must name it. The navigation target is only an
+        // identifier, so an unresolved title reads as the literal word "Folder".
+        sidebarItem(named: "Projects", in: app).click()
+        let titledWindow = app.windows["Projects"]
+        XCTAssertTrue(
+            titledWindow.waitForExistence(timeout: 5),
+            "Window titles: \(app.windows.allElementsBoundByIndex.map(\.title))"
+        )
+
         app.typeKey("n", modifierFlags: [.command, .option, .shift])
         let childFolder = sidebarItem(named: "New Folder", in: app)
         XCTAssertTrue(childFolder.waitForExistence(timeout: 5))
@@ -158,6 +167,21 @@ final class FramebaseUITests: XCTestCase {
         // Only the on-screen cells are realized, so this is a floor, not a count.
         XCTAssertGreaterThan(cells.count, 0)
 
+        // Each cell captions itself with the asset's display name.
+        //
+        // Scope note: this proves the caption is built, not that it is visible.
+        // A thumbnail that overflows its cell pushes the caption off-screen
+        // while leaving it in the accessibility tree with an unchanged frame,
+        // so neither existence nor geometry catches that regression here —
+        // reproducing it needs real photographs rather than fixtures.
+        let filenameLabel = app.staticTexts.matching(
+            NSPredicate(format: "value BEGINSWITH %@ OR label BEGINSWITH %@", "sample-", "sample-")
+        ).element(boundBy: 0)
+        XCTAssertTrue(
+            filenameLabel.waitForExistence(timeout: 15),
+            "No cell rendered its filename. Cells: \(cells.debugDescription)"
+        )
+
         // A dequeued cell that raises during layout takes the process with it,
         // and a browser that keeps cancelling and re-requesting its thumbnails
         // pins the main thread, which stalls these queries until they time out.
@@ -165,6 +189,20 @@ final class FramebaseUITests: XCTestCase {
         firstCell.click()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
         XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(
+            app.staticTexts["File"].waitForExistence(timeout: 10),
+            "The inspector did not show single-asset detail after a click."
+        )
+
+        // The inspector swaps its "File" detail for a "Selection" summary once
+        // more than one asset is selected, so this catches ⌘A regressing to a
+        // no-op while the grid holds focus. It does not distinguish selecting
+        // the realized cells from selecting every asset in a paged scope.
+        app.typeKey("a", modifierFlags: [.command])
+        XCTAssertTrue(
+            app.staticTexts["Selection"].waitForExistence(timeout: 10),
+            "Command-A did not select every asset while the grid had focus."
+        )
     }
 
     private func writeJPEG(named name: String, in directoryURL: URL) throws -> URL {

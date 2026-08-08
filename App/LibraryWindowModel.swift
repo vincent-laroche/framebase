@@ -215,6 +215,24 @@ final class LibraryWindowModel {
         }
     }
 
+    /// `NavigationTarget` is a plain identifier, so it can only name the
+    /// library-wide destinations. Folder and album names live in the observed
+    /// snapshots, which is why the resolved title belongs here.
+    var navigationTitle: String {
+        switch navigationTarget {
+        case let .folder(folderID):
+            folderTreeSnapshot?
+                .folders
+                .first { $0.id == folderID }?
+                .name
+                .description ?? navigationTarget.title
+        case let .album(albumID):
+            albums.first { $0.id == albumID }?.name ?? navigationTarget.title
+        case .allAssets, .inbox, .favorites:
+            navigationTarget.title
+        }
+    }
+
     func selectAllVisibleAssets() {
         selectedAssetIDs = Set(orderedVisibleAssetIDs)
         selectionAnchorID = orderedVisibleAssetIDs.first
