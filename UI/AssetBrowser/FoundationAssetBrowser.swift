@@ -13,57 +13,68 @@ enum AssetBrowserPresentation: String, CaseIterable, Identifiable {
 
 struct FoundationAssetBrowser: View {
     let model: LibraryWindowModel
+    let searchText: Binding<String>
 
     var body: some View {
-        Group {
-            switch model.container.libraryState {
-            case .notConfigured, .failed:
-                LibrarySetupView(container: model.container)
-            case .opening:
-                ProgressView("Opening Framebase Library…")
-                    .controlSize(.large)
-            case .ready:
-                if model.orderedVisibleAssetIDs.isEmpty {
-                    ContentUnavailableView {
-                        Label(model.navigationTitle, systemImage: "photo.stack")
-                    } description: {
-                        Text("No assets match this destination.")
-                    }
-                    .accessibilityIdentifier("assetBrowser.empty.\(model.navigationTarget.title)")
-                } else {
-                    switch model.browserPresentation {
-                    case .grid:
-                        NativeAssetCollection(
-                            records: model.assetGridRecords,
-                            thumbnailStates: model.thumbnailStates,
-                            selectedAssetIDs: model.selectedAssetIDs,
-                            thumbnailSize: model.thumbnailSize,
-                            onSelectionChanged: { ids, anchorID in
-                                model.selectedAssetIDs = ids
-                                model.selectionAnchorID = anchorID
-                                model.keyboardFocusedAssetID = anchorID
-                            },
-                            onRequestThumbnail: { record, scale in
-                                model.requestThumbnail(for: record, displayScale: scale)
-                            },
-                            onCancelThumbnail: model.cancelThumbnail,
-                            onNearEnd: model.loadNextAssetPageIfNeeded,
-                            onSelectAll: model.selectAllVisibleAssets
-                        )
-                        .accessibilityIdentifier("assetBrowser.grid")
-                    case .list:
-                        NativeAssetTable(
-                            records: model.assetGridRecords,
-                            selectedAssetIDs: model.selectedAssetIDs,
-                            onSelectionChanged: { ids, anchorID in
-                                model.selectedAssetIDs = ids
-                                model.selectionAnchorID = anchorID
-                                model.keyboardFocusedAssetID = anchorID
-                            },
-                            onNearEnd: model.loadNextAssetPageIfNeeded,
-                            onSelectAll: model.selectAllVisibleAssets
-                        )
-                        .accessibilityIdentifier("assetBrowser.list")
+        VStack(spacing: 0) {
+            HStack {
+                TextField("Search Library", text: searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("assetBrowser.search")
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            Group {
+                switch model.container.libraryState {
+                case .notConfigured, .failed:
+                    LibrarySetupView(container: model.container)
+                case .opening:
+                    ProgressView("Opening Framebase Library…")
+                        .controlSize(.large)
+                case .ready:
+                    if model.orderedVisibleAssetIDs.isEmpty {
+                        ContentUnavailableView {
+                            Label(model.navigationTitle, systemImage: "photo.stack")
+                        } description: {
+                            Text("No assets match this destination.")
+                        }
+                        .accessibilityIdentifier("assetBrowser.empty.\(model.navigationTarget.title)")
+                    } else {
+                        switch model.browserPresentation {
+                        case .grid:
+                            NativeAssetCollection(
+                                records: model.assetGridRecords,
+                                thumbnailStates: model.thumbnailStates,
+                                selectedAssetIDs: model.selectedAssetIDs,
+                                thumbnailSize: model.thumbnailSize,
+                                onSelectionChanged: { ids, anchorID in
+                                    model.selectedAssetIDs = ids
+                                    model.selectionAnchorID = anchorID
+                                    model.keyboardFocusedAssetID = anchorID
+                                },
+                                onRequestThumbnail: { record, scale in
+                                    model.requestThumbnail(for: record, displayScale: scale)
+                                },
+                                onCancelThumbnail: model.cancelThumbnail,
+                                onNearEnd: model.loadNextAssetPageIfNeeded,
+                                onSelectAll: model.selectAllVisibleAssets
+                            )
+                            .accessibilityIdentifier("assetBrowser.grid")
+                        case .list:
+                            NativeAssetTable(
+                                records: model.assetGridRecords,
+                                selectedAssetIDs: model.selectedAssetIDs,
+                                onSelectionChanged: { ids, anchorID in
+                                    model.selectedAssetIDs = ids
+                                    model.selectionAnchorID = anchorID
+                                    model.keyboardFocusedAssetID = anchorID
+                                },
+                                onNearEnd: model.loadNextAssetPageIfNeeded,
+                                onSelectAll: model.selectAllVisibleAssets
+                            )
+                            .accessibilityIdentifier("assetBrowser.list")
+                        }
                     }
                 }
             }

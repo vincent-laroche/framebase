@@ -314,7 +314,7 @@ final class FramebaseUITests: XCTestCase {
         gridAction.click()
         XCTAssertTrue(grid.waitForExistence(timeout: 10), "Grid presentation did not restore after list verification.")
 
-        let searchField = app.searchFields["Search Library"]
+        let searchField = app.descendants(matching: .any)["assetBrowser.search"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "The native structured search field is missing.")
         searchField.click()
         searchField.typeText("sample-0")

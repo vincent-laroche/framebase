@@ -76,7 +76,7 @@ struct LibraryWindowView: View {
             )
                 .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 320)
         } detail: {
-            FoundationAssetBrowser(model: model)
+            FoundationAssetBrowser(model: model, searchText: searchTextBinding)
                 .dropDestination(for: URL.self) { urls, _ in
                     guard model.container.canBrowseLibrary, !urls.isEmpty else { return false }
                     Task {
@@ -259,7 +259,6 @@ struct LibraryWindowView: View {
             }
         }
         .focusedSceneValue(\.libraryCommandActions, commandActions)
-        .searchable(text: searchTextBinding, prompt: "Search Library")
         .onAppear {
             model.isInspectorVisible = storedInspectorVisible
             model.thumbnailSize = storedThumbnailSize
