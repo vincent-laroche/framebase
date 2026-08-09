@@ -22,6 +22,10 @@ public protocol FolderRepository: Sendable {
     func treeSnapshot() async throws -> FolderTreeSnapshot
     func observeTree() -> AsyncThrowingStream<FolderTreeSnapshot, any Error>
     func createFolder(named name: FolderName, in parentFolderID: FolderID?) async throws -> Folder
+    /// Creates a folder with a caller-specified identity rather than a
+    /// generated one. Exists for applying a pulled cloud change event, which
+    /// must recreate the folder under the same ID the origin device used.
+    func createFolder(id: FolderID, named name: FolderName, in parentFolderID: FolderID?) async throws -> Folder
     func renameFolder(_ folderID: FolderID, to name: FolderName) async throws
     func reparentFolder(_ folderID: FolderID, to parentFolderID: FolderID?) async throws
     func deletePreservingAssets(_ folderID: FolderID) async throws -> FolderDeletionReceipt

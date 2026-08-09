@@ -44,6 +44,10 @@ public struct CatalogFolderRepository: FolderRepository, Sendable {
     }
 
     public func createFolder(named name: FolderName, in parentFolderID: FolderID?) async throws -> Folder {
+        try await createFolder(id: FolderID(), named: name, in: parentFolderID)
+    }
+
+    public func createFolder(id: FolderID, named name: FolderName, in parentFolderID: FolderID?) async throws -> Folder {
         try await databasePool.write { db in
             if let parentFolderID {
                 try Self.validateMutableParent(parentFolderID, in: db)
@@ -59,7 +63,7 @@ public struct CatalogFolderRepository: FolderRepository, Sendable {
             }
             let now = Date()
             let folder = Folder(
-                id: FolderID(),
+                id: id,
                 name: name,
                 parentFolderID: parentFolderID,
                 createdAt: now,
