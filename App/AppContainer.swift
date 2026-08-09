@@ -1,8 +1,20 @@
+import FramebaseAPIClient
 import FramebaseCatalog
 import FramebaseDomain
 import FramebaseMedia
 import Foundation
 import Observation
+
+enum AppContainerError: Error, LocalizedError {
+    case invalidEnrollmentResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidEnrollmentResponse:
+            "The server's enrollment response could not be understood."
+        }
+    }
+}
 
 @MainActor
 @Observable
@@ -14,8 +26,26 @@ final class AppContainer {
         case failed(String)
     }
 
+    /// Dev-phase device enrollment against `framebase-api-dev`. Independent of
+    /// `LibraryState` — device identity isn't library data, so this is
+    /// available whether or not a library is open.
+    enum EnrollmentStatus: Equatable {
+        case notEnrolled
+        case enrolled(deviceId: String, expiresAt: Date)
+        case expired(deviceId: String)
+    }
+
+    /// `framebase-api-dev`, the Cloudflare dev Worker deployed for Phase 2.
+    /// Development-only: no production API exists yet.
+    static let cloudDevBaseURL = URL(string: "https://framebase-api-dev.notionsync.workers.dev")!
+
     private(set) var libraryState: LibraryState = .notConfigured
     private(set) var libraryRootURL: URL?
+    private(set) var enrollmentStatus: EnrollmentStatus = .notEnrolled
+
+    @ObservationIgnored private let cloudCredentialStore: any DeviceCredentialStore
+    @ObservationIgnored private let apiClient: any APIClientProtocol
+    @ObservationIgnored private static let cloudDeviceIDPreferenceKey = "framebase.cloudDeviceId"
 
     @ObservationIgnored private let libraryCoordinator = LibraryPackageCoordinator()
     @ObservationIgnored private let preferences: UserDefaults
@@ -35,6 +65,9 @@ final class AppContainer {
 
     init(preferences: UserDefaults = .standard) {
         self.preferences = preferences
+        let credentialStore = KeychainDeviceCredentialStore()
+        self.cloudCredentialStore = credentialStore
+        self.apiClient = FramebaseAPIClient(baseURL: Self.cloudDevBaseURL, credentialStore: credentialStore)
     }
 
     var canBrowseLibrary: Bool {
@@ -105,6 +138,64 @@ final class AppContainer {
         } catch {
             libraryState = .failed(error.localizedDescription)
         }
+    }
+
+    // MARK: - Cloud (dev) device enrollment
+    //
+    // Independent of library state by design. Enrolling only registers this
+    // Mac against `framebase-api-dev` and stores a session JWT in Keychain —
+    // it never touches catalog data, and nothing here starts a `SyncEngine`
+    // against the real library. Real catalog sync is out of scope until
+    // Phase 2's "fixture assets only, no personal photos" boundary is
+    // explicitly lifted.
+
+    func refreshEnrollmentStatus() async {
+        guard let credential = try? await cloudCredentialStore.currentCredential() else {
+            enrollmentStatus = .notEnrolled
+            return
+        }
+        enrollmentStatus = credential.isExpired()
+            ? .expired(deviceId: credential.deviceId)
+            : .enrolled(deviceId: credential.deviceId, expiresAt: credential.expiresAt)
+    }
+
+    func enrollDevice(enrollmentSecret: String, deviceName: String) async throws {
+        let deviceID = persistedOrNewCloudDeviceID()
+        let response = try await apiClient.enroll(
+            enrollmentSecret: enrollmentSecret,
+            request: EnrollRequest(
+                deviceId: deviceID,
+                deviceName: deviceName,
+                publicKey: "unused-phase-2-shared-secret-gate"
+            )
+        )
+        guard let expiresAt = ISO8601Coding.parse(response.expiresAt) else {
+            throw AppContainerError.invalidEnrollmentResponse
+        }
+        try await cloudCredentialStore.store(StoredDeviceCredential(
+            deviceId: response.deviceId,
+            token: response.token,
+            expiresAt: expiresAt
+        ))
+        await refreshEnrollmentStatus()
+    }
+
+    func forgetDevice() async throws {
+        try await cloudCredentialStore.clear()
+        await refreshEnrollmentStatus()
+    }
+
+    func checkCloudHealth() async throws -> HealthResponse {
+        try await apiClient.health()
+    }
+
+    private func persistedOrNewCloudDeviceID() -> String {
+        if let existing = preferences.string(forKey: Self.cloudDeviceIDPreferenceKey) {
+            return existing
+        }
+        let newID = UUID().uuidString
+        preferences.set(newID, forKey: Self.cloudDeviceIDPreferenceKey)
+        return newID
     }
 
     func clearDerivedCache() async throws {
