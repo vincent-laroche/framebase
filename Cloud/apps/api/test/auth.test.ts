@@ -11,12 +11,41 @@ describe('POST /v1/auth/enroll', () => {
     env = createTestEnv();
   });
 
-  it('registers a device and issues a signed, scoped bearer token', async () => {
+  it('rejects enrollment without the enrollment secret', async () => {
     const res = await app.request(
       '/v1/auth/enroll',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: 'device-0', deviceName: 'x', publicKey: 'x' })
+      },
+      env
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects enrollment with the wrong enrollment secret', async () => {
+    const res = await app.request(
+      '/v1/auth/enroll',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Enrollment-Secret': 'wrong' },
+        body: JSON.stringify({ deviceId: 'device-0', deviceName: 'x', publicKey: 'x' })
+      },
+      env
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('registers a device and issues a signed, scoped bearer token', async () => {
+    const res = await app.request(
+      '/v1/auth/enroll',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Enrollment-Secret': env.ENROLLMENT_SECRET as string
+        },
         body: JSON.stringify({
           deviceId: 'device-1',
           deviceName: "Vincent's Mac",
@@ -42,8 +71,33 @@ describe('POST /v1/auth/enroll', () => {
       '/v1/auth/enroll',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Enrollment-Secret': env.ENROLLMENT_SECRET as string
+        },
         body: JSON.stringify({ deviceId: 'device-2' })
+      },
+      env
+    );
+
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a request for a scope that is never grantable in Phase 2', async () => {
+    const res = await app.request(
+      '/v1/auth/enroll',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Enrollment-Secret': env.ENROLLMENT_SECRET as string
+        },
+        body: JSON.stringify({
+          deviceId: 'device-3',
+          deviceName: 'x',
+          publicKey: 'x',
+          scopes: ['library.read', 'purge.approve']
+        })
       },
       env
     );

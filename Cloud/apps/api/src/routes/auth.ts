@@ -6,7 +6,24 @@ export const authRouter = new Hono<AppEnv>();
 
 const SESSION_LIFETIME_SECONDS = 3600;
 
+const DEFAULT_SCOPES = [
+  'library.read',
+  'assets.import',
+  'assets.metadata.write',
+  'assets.organize',
+  'originals.download',
+  'trash.write'
+];
+
+// purge.approve is deliberately absent: excluded from every device's scopes in Phase 2.
+const GRANTABLE_SCOPES = new Set(DEFAULT_SCOPES);
+
 authRouter.post('/auth/enroll', async (c) => {
+  const enrollmentSecret = c.req.header('X-Enrollment-Secret');
+  if (!c.env.ENROLLMENT_SECRET || enrollmentSecret !== c.env.ENROLLMENT_SECRET) {
+    return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid or missing enrollment secret' } }, 401);
+  }
+
   const body = await c.req.json<{
     deviceId: string;
     deviceName: string;
@@ -28,16 +45,15 @@ authRouter.post('/auth/enroll', async (c) => {
     );
   }
 
-  const defaultScopes = [
-    'library.read',
-    'assets.import',
-    'assets.metadata.write',
-    'assets.organize',
-    'originals.download',
-    'trash.write'
-  ];
+  const requestedScopes = body.scopes || DEFAULT_SCOPES;
+  const ungrantable = requestedScopes.filter((scope) => !GRANTABLE_SCOPES.has(scope));
+  if (ungrantable.length > 0) {
+    return c.json(
+      { error: { code: 'INVALID_SCOPE', message: `Not grantable in Phase 2: ${ungrantable.join(', ')}` } },
+      400
+    );
+  }
 
-  const requestedScopes = body.scopes || defaultScopes;
   const scopesJson = JSON.stringify(requestedScopes);
 
   await c.env.DB.prepare(

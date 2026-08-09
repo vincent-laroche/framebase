@@ -10,7 +10,10 @@ export async function enrollDevice(
     '/v1/auth/enroll',
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Enrollment-Secret': (env.ENROLLMENT_SECRET as string) ?? ''
+      },
       body: JSON.stringify({
         deviceId,
         deviceName: `Test Device ${deviceId}`,

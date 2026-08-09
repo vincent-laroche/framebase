@@ -22,7 +22,15 @@ const PROTECTED_REQUESTS: Array<[string, RequestInit]> = [
       body: JSON.stringify({ sha256: 'a'.repeat(64), byteSize: 1, mediaType: 'image/jpeg', originalExtension: 'jpg' })
     }
   ],
-  ['/v1/blobs/nonexistent/download', { method: 'GET' }]
+  ['/v1/blobs/nonexistent/download', { method: 'GET' }],
+  [
+    '/v1/auth/enroll',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'x', deviceName: 'x', publicKey: 'x' })
+    }
+  ]
 ];
 
 describe('negative auth', () => {

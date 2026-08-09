@@ -2,6 +2,7 @@ export interface Bindings {
   DB: D1Database;
   BLOBS: R2Bucket;
   JWT_SECRET?: string;
+  ENROLLMENT_SECRET?: string;
 }
 
 export interface Variables {

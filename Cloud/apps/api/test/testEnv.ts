@@ -7,6 +7,7 @@ export function createTestEnv(): Bindings {
   return {
     DB: createFakeD1(schemaSql),
     BLOBS: createFakeR2(),
-    JWT_SECRET: 'contract-test-only-secret-do-not-reuse'
+    JWT_SECRET: 'contract-test-only-secret-do-not-reuse',
+    ENROLLMENT_SECRET: 'contract-test-only-enrollment-secret'
   };
 }
