@@ -203,6 +203,105 @@ final class FramebaseUITests: XCTestCase {
             app.staticTexts["Selection"].waitForExistence(timeout: 10),
             "Command-A did not select every asset while the grid had focus."
         )
+
+        attachScreenshot(named: "ImportedCellRendered", in: app)
+    }
+
+    /// Scaled fixture test (300+ assets) that verifies:
+    /// 1) Grid thumbnail rendering under scale with real/synthetic images.
+    /// 2) Command-A selects all assets and updates inspector to "Selection".
+    /// 3) Single click collapses a multi-selection back to 1 asset ("File" inspector).
+    /// 4) Captures XCTAttachment screenshots at key milestones for visual verification.
+    @MainActor
+    func testScaledLibrarySelectionAndScreenshotHarness() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-\(UUID().uuidString).framebase", isDirectory: true)
+        let sourceDirectoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-Sources-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectoryURL, withIntermediateDirectories: true)
+
+        var sourceURLs: [URL] = []
+        let downloadsExportURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads/01_library_2026-08-06_04_46", isDirectory: true)
+        if let enumerator = FileManager.default.enumerator(at: downloadsExportURL, includingPropertiesForKeys: nil) {
+            for case let fileURL as URL in enumerator {
+                if ["jpg", "jpeg"].contains(fileURL.pathExtension.lowercased()) {
+                    sourceURLs.append(fileURL)
+                    if sourceURLs.count >= 300 { break }
+                }
+            }
+        }
+        let realCount = sourceURLs.count
+        if sourceURLs.count < 300 {
+            for index in realCount..<300 {
+                let url = try writeJPEG(named: "scaled-sample-\(index).jpg", in: sourceDirectoryURL)
+                sourceURLs.append(url)
+            }
+        }
+
+        let app = XCUIApplication()
+        app.launchEnvironment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] = rootURL.path
+        app.launchEnvironment["FRAMEBASE_UI_TEST_IMPORT_SOURCES"] = sourceURLs
+            .map(\.path)
+            .joined(separator: "\n")
+        app.launch()
+        defer {
+            app.terminate()
+            if rootURL.lastPathComponent.hasPrefix("FramebaseUITests-"),
+               rootURL.pathExtension == "framebase" {
+                try? FileManager.default.removeItem(at: rootURL)
+            }
+            if sourceDirectoryURL.lastPathComponent.hasPrefix("FramebaseUITests-Sources-") {
+                try? FileManager.default.removeItem(at: sourceDirectoryURL)
+            }
+        }
+
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(sidebarItem(named: "All Assets", in: app).waitForExistence(timeout: 5))
+
+        app.typeKey("i", modifierFlags: [.command, .shift])
+
+        let grid = app.descendants(matching: .any)["assetBrowser.grid"]
+        XCTAssertTrue(
+            grid.waitForExistence(timeout: 30),
+            "The asset grid never replaced the empty-state view."
+        )
+
+        let cells = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "asset.")
+        )
+        let firstCell = cells.element(boundBy: 0)
+        XCTAssertTrue(
+            firstCell.waitForExistence(timeout: 30),
+            "No asset cell was rendered in scaled test."
+        )
+
+        attachScreenshot(named: "01-ScaledGridImported", in: app)
+
+        app.typeKey("a", modifierFlags: [.command])
+        XCTAssertTrue(
+            app.staticTexts["Selection"].waitForExistence(timeout: 10),
+            "Command-A did not trigger multi-selection on 300+ asset library."
+        )
+
+        attachScreenshot(named: "02-MultiSelectionAll", in: app)
+
+        firstCell.click()
+        XCTAssertTrue(
+            app.staticTexts["File"].waitForExistence(timeout: 10),
+            "Single click on a cell did not collapse multi-selection back to single item inspector."
+        )
+
+        attachScreenshot(named: "03-SingleCellCollapsed", in: app)
+    }
+
+    @MainActor
+    private func attachScreenshot(named name: String, in app: XCUIApplication) {
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func writeJPEG(named name: String, in directoryURL: URL) throws -> URL {

@@ -105,7 +105,7 @@ struct LibraryWindowView: View {
                 }
             }
         }
-        .focusedValue(\.libraryCommandActions, commandActions)
+        .focusedSceneValue(\.libraryCommandActions, commandActions)
         .onAppear {
             model.isInspectorVisible = storedInspectorVisible
             model.thumbnailSize = storedThumbnailSize

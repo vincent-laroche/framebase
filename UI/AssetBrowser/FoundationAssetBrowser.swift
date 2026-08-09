@@ -250,6 +250,7 @@ private struct NativeAssetCollection: NSViewControllerRepresentable {
             _ collectionView: NSCollectionView,
             pasteboardWriterForItemAt indexPath: IndexPath
         ) -> (any NSPasteboardWriting)? {
+            (collectionView as? AssetCollectionView)?.clearPendingCollapse()
             guard indexPath.item < parent.records.count else { return nil }
             let selectedIDs = assetIDs(for: collectionView.selectionIndexPaths)
             let draggedIDs = selectedIDs.isEmpty
@@ -321,6 +322,7 @@ private struct NativeAssetCollection: NSViewControllerRepresentable {
 @MainActor
 private final class AssetCollectionView: NSCollectionView {
     var onSelectAll: (() -> Void)?
+    private var pendingCollapseIndexPath: IndexPath?
 
     override func selectAll(_ sender: Any?) {
         guard let onSelectAll else {
@@ -328,6 +330,37 @@ private final class AssetCollectionView: NSCollectionView {
             return
         }
         onSelectAll()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if !flags.contains(.command),
+           !flags.contains(.shift),
+           let indexPath = indexPathForItem(at: point),
+           selectionIndexPaths.contains(indexPath),
+           selectionIndexPaths.count > 1 {
+            pendingCollapseIndexPath = indexPath
+        } else {
+            pendingCollapseIndexPath = nil
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let indexPath = pendingCollapseIndexPath
+        pendingCollapseIndexPath = nil
+        super.mouseUp(with: event)
+        if let indexPath, selectionIndexPaths.count > 1 {
+            selectionIndexPaths = [indexPath]
+            if let coordinator = delegate as? NativeAssetCollection.Coordinator {
+                coordinator.collectionView(self, didSelectItemsAt: [indexPath])
+            }
+        }
+    }
+
+    func clearPendingCollapse() {
+        pendingCollapseIndexPath = nil
     }
 }
 
