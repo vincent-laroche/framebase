@@ -98,6 +98,21 @@ struct LibraryWindowView: View {
                 }
                 .disabled(!model.container.canBrowseLibrary)
 
+                // This must remain an early, compact toolbar item. A
+                // segmented picker is pushed into the overflow menu on
+                // narrower windows, making both view modes undiscoverable.
+                Menu {
+                    Button("Grid") {
+                        browserPresentationBinding.wrappedValue = .grid
+                    }
+                    Button("List") {
+                        browserPresentationBinding.wrappedValue = .list
+                    }
+                } label: {
+                    Label("View", systemImage: model.browserPresentation.systemImage)
+                }
+                .accessibilityIdentifier("toolbar.browserView")
+
                 Button(role: .destructive) {
                     Task { await model.moveSelectedAssetsToTrash() }
                 } label: {
@@ -226,16 +241,6 @@ struct LibraryWindowView: View {
                         onChange: model.updateSearchCriteria
                     )
                 }
-
-                Picker("View", selection: browserPresentationBinding) {
-                    ForEach(AssetBrowserPresentation.allCases) { presentation in
-                        Label(presentation.title, systemImage: presentation.systemImage)
-                            .tag(presentation)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 104)
-                .accessibilityIdentifier("assetBrowser.presentation")
 
                 Slider(value: thumbnailSizeBinding, in: 96...280, step: 8) {
                     Text("Thumbnail Size")

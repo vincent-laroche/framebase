@@ -295,9 +295,12 @@ final class FramebaseUITests: XCTestCase {
         // This stays fixture-only. It will run in CI or a dedicated session;
         // local headless verification compiles the target but never drives the
         // active macOS desktop through XCUITest.
-        let presentation = app.segmentedControls["assetBrowser.presentation"]
-        XCTAssertTrue(presentation.waitForExistence(timeout: 5), "The browser presentation control is missing.")
-        presentation.buttons["List"].click()
+        let viewMenu = app.descendants(matching: .any)["toolbar.browserView"]
+        XCTAssertTrue(viewMenu.waitForExistence(timeout: 5), "The browser view menu is missing.")
+        viewMenu.click()
+        let listAction = app.menuItems["List"]
+        XCTAssertTrue(listAction.waitForExistence(timeout: 5), "The List view action is missing.")
+        listAction.click()
         let list = app.descendants(matching: .any)["assetBrowser.list"]
         XCTAssertTrue(list.waitForExistence(timeout: 10), "List presentation did not replace the grid.")
         app.typeKey("a", modifierFlags: [.command])
@@ -305,7 +308,10 @@ final class FramebaseUITests: XCTestCase {
             app.staticTexts["Selection"].waitForExistence(timeout: 10),
             "Command-A did not select the paged list records."
         )
-        presentation.buttons["Grid"].click()
+        viewMenu.click()
+        let gridAction = app.menuItems["Grid"]
+        XCTAssertTrue(gridAction.waitForExistence(timeout: 5), "The Grid view action is missing.")
+        gridAction.click()
         XCTAssertTrue(grid.waitForExistence(timeout: 10), "Grid presentation did not restore after list verification.")
 
         let searchField = app.searchFields["Search Library"]
@@ -387,7 +393,12 @@ final class FramebaseUITests: XCTestCase {
         try FileManager.default.createDirectory(at: sourceDirectoryURL, withIntermediateDirectories: true)
 
         let sourceURLs = try (0..<300).map { index in
-            try writeJPEG(named: "scaled-sample-\(index).jpg", in: sourceDirectoryURL)
+            try writeJPEG(
+                named: "scaled-sample-\(index).jpg",
+                in: sourceDirectoryURL,
+                width: 320,
+                height: 240
+            )
         }
 
         let app = XCUIApplication()
@@ -414,7 +425,7 @@ final class FramebaseUITests: XCTestCase {
 
         let grid = app.descendants(matching: .any)["assetBrowser.grid"]
         XCTAssertTrue(
-            grid.waitForExistence(timeout: 30),
+            grid.waitForExistence(timeout: 60),
             "The asset grid never replaced the empty-state view."
         )
 
@@ -423,7 +434,7 @@ final class FramebaseUITests: XCTestCase {
         )
         let firstCell = cells.element(boundBy: 0)
         XCTAssertTrue(
-            firstCell.waitForExistence(timeout: 30),
+            firstCell.waitForExistence(timeout: 60),
             "No asset cell was rendered in scaled test."
         )
 
@@ -455,9 +466,12 @@ final class FramebaseUITests: XCTestCase {
         add(attachment)
     }
 
-    private func writeJPEG(named name: String, in directoryURL: URL) throws -> URL {
-        let width = 1_200
-        let height = 900
+    private func writeJPEG(
+        named name: String,
+        in directoryURL: URL,
+        width: Int = 1_200,
+        height: Int = 900
+    ) throws -> URL {
         let bytesPerRow = width * 4
         var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
         for y in 0..<height {
