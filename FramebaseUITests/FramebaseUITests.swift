@@ -321,11 +321,14 @@ final class FramebaseUITests: XCTestCase {
         let filteredCells = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "asset.")
         )
-        let oneFilteredCell = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "count == 1"),
-            object: filteredCells
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [oneFilteredCell], timeout: 10), .completed)
+        func waitForFilteredCells(matching format: String) -> XCTWaiter.Result {
+            let expectation = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: format),
+                object: filteredCells
+            )
+            return XCTWaiter.wait(for: [expectation], timeout: 10)
+        }
+        XCTAssertEqual(waitForFilteredCells(matching: "count == 1"), .completed)
         XCTAssertEqual(filteredCells.count, 1, "Search did not reduce the browser to its one matching asset.")
 
         let savedSearches = app.descendants(matching: .any)["toolbar.savedSearches"]
@@ -358,23 +361,15 @@ final class FramebaseUITests: XCTestCase {
         app.typeKey("a", modifierFlags: [.command])
         app.typeKey(.delete, modifierFlags: [])
         allAssets.click()
-        let restoredCells = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "count > 1"),
-            object: filteredCells
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [restoredCells], timeout: 10), .completed)
+        XCTAssertEqual(waitForFilteredCells(matching: "count > 1"), .completed)
 
         renamedSavedSearch.click()
-        let reappliedCells = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "count == 1"),
-            object: filteredCells
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [reappliedCells], timeout: 10), .completed)
+        XCTAssertEqual(waitForFilteredCells(matching: "count == 1"), .completed)
 
         allAssets.click()
-        XCTAssertEqual(XCTWaiter.wait(for: [restoredCells], timeout: 10), .completed)
+        XCTAssertEqual(waitForFilteredCells(matching: "count > 1"), .completed)
         smartCollection.click()
-        XCTAssertEqual(XCTWaiter.wait(for: [reappliedCells], timeout: 10), .completed)
+        XCTAssertEqual(waitForFilteredCells(matching: "count == 1"), .completed)
 
         attachScreenshot(named: "ImportedCellRendered", in: app)
     }
