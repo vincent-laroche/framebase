@@ -17,7 +17,7 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
 
     public func count(matching query: AssetQuery) async throws -> Int {
         return try await databasePool.read { db in
-            let statement = Self.scopeStatement(query.scope)
+            let statement = Self.queryStatement(query)
             return try Int.fetchOne(
                 db,
                 sql: "SELECT COUNT(*) \(statement.fromAndWhereSQL)",
@@ -30,7 +30,7 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
         let interval = Self.signposter.beginInterval("Ordered Asset IDs")
         defer { Self.signposter.endInterval("Ordered Asset IDs", interval) }
         return try await databasePool.read { db in
-            let statement = Self.scopeStatement(query.scope)
+            let statement = Self.queryStatement(query)
             let values = try String.fetchAll(
                 db,
                 sql: "SELECT assets.id \(statement.fromAndWhereSQL) \(Self.orderClause(sort))",
@@ -54,7 +54,7 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
         defer { Self.signposter.endInterval("Asset Page", interval) }
 
         return try await databasePool.read { db in
-            let statement = Self.scopeStatement(query.scope)
+            let statement = Self.queryStatement(query)
             let count = try Int.fetchOne(
                 db,
                 sql: "SELECT COUNT(*) \(statement.fromAndWhereSQL)",
@@ -108,11 +108,28 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
     }
 
     public func observe(matching query: AssetQuery) -> AsyncThrowingStream<CatalogChange, any Error> {
-        let regions: [any DatabaseRegionConvertible] = query.scope.isAlbum
-            ? [Table("assets"), Table("album_assets")]
-            : [Table("assets")]
+        var regions: [any DatabaseRegionConvertible] = [Table("assets"), Table("asset_trash")]
+        switch query.scope {
+        case .album:
+            regions.append(Table("album_assets"))
+        case .tag:
+            regions.append(Table("asset_tags"))
+        default: break
+        }
+        if !query.criteria.tagIDs.isEmpty {
+            regions.append(Table("asset_tags"))
+        }
+        if !query.criteria.albumIDs.isEmpty {
+            regions.append(Table("album_assets"))
+        }
+        if query.criteria.folderPathText != nil {
+            regions.append(Table("folders"))
+        }
+        if query.criteria.text != nil || query.criteria.metadataText != nil {
+            regions.append(Table("asset_search"))
+        }
         let observation = ValueObservation.tracking(regions: regions) { db in
-            let statement = Self.scopeStatement(query.scope)
+            let statement = Self.queryStatement(query)
             return try Int.fetchOne(
                 db,
                 sql: "SELECT COUNT(*) \(statement.fromAndWhereSQL)",
@@ -125,9 +142,12 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
             let task = Task {
                 do {
                     for try await _ in values {
-                        let areas: Set<CatalogChange.Area> = query.scope.isAlbum
-                            ? [.assets, .albums]
-                            : [.assets]
+                        var areas: Set<CatalogChange.Area> = [.assets]
+                        if case .album = query.scope { areas.insert(.albums) }
+                        if case .tag = query.scope { areas.insert(.tags) }
+                        if !query.criteria.albumIDs.isEmpty { areas.insert(.albums) }
+                        if !query.criteria.tagIDs.isEmpty { areas.insert(.tags) }
+                        if query.criteria.folderPathText != nil { areas.insert(.folders) }
                         continuation.yield(CatalogChange(areas: areas))
                     }
                     continuation.finish()
@@ -160,22 +180,124 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
     }
 
     public func moveAssets(_ assetIDs: Set<AssetID>, to folderID: FolderID) async throws {
-        guard !assetIDs.isEmpty else { return }
-        try await databasePool.write { db in
+        _ = try await moveAssetsWithReceipt(assetIDs, to: folderID)
+    }
+
+    public func moveAssetsWithReceipt(_ assetIDs: Set<AssetID>, to folderID: FolderID) async throws -> AssetMoveReceipt {
+        guard !assetIDs.isEmpty else { return AssetMoveReceipt(priorFolderByAssetID: [:]) }
+        return try await databasePool.write { db in
             guard try Self.folderExists(folderID, in: db) else {
                 throw CatalogError.folderNotFound(folderID)
             }
             let identifiers = assetIDs.map(\.description).sorted()
-            let updatedAt = CatalogDate.milliseconds(Date())
-            for chunk in identifiers.chunked(maximumCount: 500) {
-                let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
-                var arguments: StatementArguments = [folderID.description, updatedAt]
-                arguments += StatementArguments(chunk)
+            let priorAssignments = try Self.folderAssignments(for: identifiers, in: db)
+            guard priorAssignments.count == identifiers.count else {
+                let present = Set(priorAssignments.keys.map(\.description))
+                let missing = identifiers.first { !present.contains($0) }!
+                throw CatalogError.assetNotFound(try Self.assetID(missing))
+            }
+            try Self.assign(assetIDs: identifiers, to: folderID, in: db)
+            return AssetMoveReceipt(priorFolderByAssetID: priorAssignments)
+        }
+    }
+
+    public func restoreAssetLocations(using receipt: AssetMoveReceipt) async throws -> AssetMoveReceipt {
+        guard !receipt.priorFolderByAssetID.isEmpty else { return AssetMoveReceipt(priorFolderByAssetID: [:]) }
+        return try await databasePool.write { db in
+            let identifiers = receipt.priorFolderByAssetID.keys.map(\.description).sorted()
+            let currentAssignments = try Self.folderAssignments(for: identifiers, in: db)
+            guard currentAssignments.count == identifiers.count else {
+                let present = Set(currentAssignments.keys.map(\.description))
+                let missing = identifiers.first { !present.contains($0) }!
+                throw CatalogError.assetNotFound(try Self.assetID(missing))
+            }
+            for folderID in Set(receipt.priorFolderByAssetID.values) {
+                guard try Self.folderExists(folderID, in: db) else {
+                    throw CatalogError.folderNotFound(folderID)
+                }
+                let assetIDs = receipt.priorFolderByAssetID
+                    .filter { $0.value == folderID }
+                    .map { $0.key.description }
+                    .sorted()
+                try Self.assign(assetIDs: assetIDs, to: folderID, in: db)
+            }
+            return AssetMoveReceipt(priorFolderByAssetID: currentAssignments)
+        }
+    }
+
+    public func moveToTrash(_ assetIDs: Set<AssetID>, retentionDays: Int) async throws -> TrashReceipt {
+        guard retentionDays > 0 else { throw CatalogError.invalidTrashRetentionDays(retentionDays) }
+        guard !assetIDs.isEmpty else { return TrashReceipt(entries: []) }
+        let orderedIDs = assetIDs.sorted { $0.description < $1.description }
+        return try await databasePool.write { db in
+            let now = Date()
+            let expiry = Calendar.current.date(byAdding: .day, value: retentionDays, to: now) ?? now
+            var entries: [TrashEntry] = []
+            for assetID in orderedIDs {
+                guard let priorFolderText = try String.fetchOne(
+                    db, sql: "SELECT parent_folder_id FROM assets WHERE id = ?", arguments: [assetID.description]
+                ), let priorFolderUUID = UUID(uuidString: priorFolderText) else {
+                    throw CatalogError.assetNotFound(assetID)
+                }
+                if try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM asset_trash WHERE asset_id = ?)", arguments: [assetID.description]) ?? false {
+                    throw CatalogError.assetAlreadyTrashed(assetID)
+                }
+                entries.append(TrashEntry(assetID: assetID, priorFolderID: FolderID(rawValue: priorFolderUUID), trashedAt: now, expiresAt: expiry))
+            }
+            for entry in entries {
                 try db.execute(
-                    sql: "UPDATE assets SET parent_folder_id = ?, updated_at_ms = ? WHERE id IN (\(placeholders))",
-                    arguments: arguments
+                    sql: "INSERT INTO asset_trash (asset_id, prior_folder_id, trashed_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)",
+                    arguments: [entry.assetID.description, entry.priorFolderID.description, CatalogDate.milliseconds(entry.trashedAt), CatalogDate.milliseconds(entry.expiresAt)]
                 )
             }
+            return TrashReceipt(entries: entries)
+        }
+    }
+
+    public func trashEntries(assetIDs: Set<AssetID>) async throws -> [TrashEntry] {
+        guard !assetIDs.isEmpty else { return [] }
+        let orderedIDs = assetIDs.sorted { $0.description < $1.description }
+        return try await databasePool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT asset_id, prior_folder_id, trashed_at_ms, expires_at_ms FROM asset_trash WHERE asset_id IN (\(orderedIDs.map { _ in "?" }.joined(separator: ", "))) ORDER BY asset_id",
+                arguments: StatementArguments(orderedIDs.map(\.description))
+            )
+            return try rows.map(Self.trashEntry)
+        }
+    }
+
+    public func restoreFromTrash(using receipt: TrashReceipt) async throws {
+        guard !receipt.entries.isEmpty else { return }
+        try await databasePool.write { db in
+            for entry in receipt.entries {
+                guard try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM asset_trash WHERE asset_id = ?)", arguments: [entry.assetID.description]) ?? false else {
+                    throw CatalogError.assetNotFound(entry.assetID)
+                }
+            }
+            for entry in receipt.entries {
+                try db.execute(sql: "DELETE FROM asset_trash WHERE asset_id = ?", arguments: [entry.assetID.description])
+            }
+        }
+    }
+
+    public func restoreFromTrash(_ assetIDs: Set<AssetID>) async throws -> TrashReceipt {
+        guard !assetIDs.isEmpty else { return TrashReceipt(entries: []) }
+        let orderedIDs = assetIDs.sorted { $0.description < $1.description }
+        return try await databasePool.write { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT asset_id, prior_folder_id, trashed_at_ms, expires_at_ms FROM asset_trash WHERE asset_id IN (\(orderedIDs.map { _ in "?" }.joined(separator: ", ")))",
+                arguments: StatementArguments(orderedIDs.map(\.description))
+            )
+            guard rows.count == orderedIDs.count else {
+                throw CatalogError.assetNotFound(orderedIDs.first!)
+            }
+            let entries = try rows.map(Self.trashEntry)
+            for entry in entries {
+                try db.execute(sql: "DELETE FROM asset_trash WHERE asset_id = ?", arguments: [entry.assetID.description])
+            }
+            return TrashReceipt(entries: entries)
         }
     }
 
@@ -208,11 +330,59 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
         ) ?? false
     }
 
+    private static func folderAssignments(for identifiers: [String], in db: Database) throws -> [AssetID: FolderID] {
+        var assignments: [AssetID: FolderID] = [:]
+        for chunk in identifiers.chunked(maximumCount: 500) {
+            let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, parent_folder_id FROM assets WHERE id IN (\(placeholders))",
+                arguments: StatementArguments(chunk)
+            )
+            for row in rows {
+                let assetID = try Self.assetID(row["id"] as String)
+                let folderText: String = row["parent_folder_id"]
+                guard let folderUUID = UUID(uuidString: folderText) else {
+                    throw CatalogError.invalidPersistedIdentifier(folderText)
+                }
+                assignments[assetID] = FolderID(rawValue: folderUUID)
+            }
+        }
+        return assignments
+    }
+
+    private static func assign(assetIDs: [String], to folderID: FolderID, in db: Database) throws {
+        let updatedAt = CatalogDate.milliseconds(Date())
+        for chunk in assetIDs.chunked(maximumCount: 500) {
+            let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
+            var arguments: StatementArguments = [folderID.description, updatedAt]
+            arguments += StatementArguments(chunk)
+            try db.execute(
+                sql: "UPDATE assets SET parent_folder_id = ?, updated_at_ms = ? WHERE id IN (\(placeholders))",
+                arguments: arguments
+            )
+        }
+    }
+
     private static func assetID(_ value: String) throws -> AssetID {
         guard let uuid = UUID(uuidString: value) else {
             throw CatalogError.invalidPersistedIdentifier(value)
         }
         return AssetID(rawValue: uuid)
+    }
+
+    private static func trashEntry(_ row: Row) throws -> TrashEntry {
+        let assetID = try Self.assetID(row["asset_id"] as String)
+        let folderText: String = row["prior_folder_id"]
+        guard let folderUUID = UUID(uuidString: folderText) else {
+            throw CatalogError.invalidPersistedIdentifier(folderText)
+        }
+        return TrashEntry(
+            assetID: assetID,
+            priorFolderID: FolderID(rawValue: folderUUID),
+            trashedAt: CatalogDate.date(row["trashed_at_ms"]),
+            expiresAt: CatalogDate.date(row["expires_at_ms"])
+        )
     }
 
     private static func orderClause(_ sort: AssetSort) -> String {
@@ -229,39 +399,123 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
         return "ORDER BY \(column) \(direction), assets.id \(direction)"
     }
 
+    private static func queryStatement(_ query: AssetQuery) -> ScopeStatement {
+        var statement = scopeStatement(query.scope)
+        let criteria = query.criteria
+        if let text = criteria.text {
+            statement.append(
+                """
+                EXISTS (
+                    SELECT 1 FROM asset_search
+                    WHERE asset_search.asset_id = assets.id AND asset_search MATCH ?
+                )
+                """,
+                argument: ftsQuery(text)
+            )
+        }
+        if let folderPathText = criteria.folderPathText {
+            statement.append(
+                """
+                EXISTS (
+                    WITH RECURSIVE folder_paths(id, path) AS (
+                        SELECT id, lower(name) FROM folders WHERE parent_folder_id IS NULL
+                        UNION ALL
+                        SELECT folders.id, folder_paths.path || '/' || lower(folders.name)
+                        FROM folders JOIN folder_paths ON folders.parent_folder_id = folder_paths.id
+                    )
+                    SELECT 1 FROM folder_paths
+                    WHERE folder_paths.id = assets.parent_folder_id AND folder_paths.path LIKE ?
+                )
+                """,
+                argument: "%\(folderPathText.lowercased())%"
+            )
+        }
+        if let metadataText = criteria.metadataText {
+            statement.append(
+                """
+                EXISTS (
+                    SELECT 1 FROM asset_search
+                    WHERE asset_search.asset_id = assets.id AND asset_search MATCH ?
+                )
+                """,
+                argument: ftsQuery(metadataText)
+            )
+        }
+        if let capturedDateRange = criteria.capturedDateRange {
+            statement.append(
+                "CAST(json_extract(assets.metadata_json, '$.exif.capturedAt') AS REAL) BETWEEN ? AND ?",
+                arguments: [
+                    capturedDateRange.start.timeIntervalSinceReferenceDate,
+                    capturedDateRange.end.timeIntervalSinceReferenceDate
+                ]
+            )
+        }
+        if let rating = criteria.rating {
+            statement.append("assets.rating = ?", argument: rating.rawValue)
+        }
+        if let favorite = criteria.favorite {
+            statement.append("assets.favorite = ?", argument: favorite)
+        }
+        for tagID in criteria.tagIDs.sorted(by: { $0.description < $1.description }) {
+            statement.append(
+                "EXISTS (SELECT 1 FROM asset_tags WHERE asset_tags.asset_id = assets.id AND asset_tags.tag_id = ?)",
+                argument: tagID.description
+            )
+        }
+        for albumID in criteria.albumIDs.sorted(by: { $0.description < $1.description }) {
+            statement.append(
+                "EXISTS (SELECT 1 FROM album_assets WHERE album_assets.asset_id = assets.id AND album_assets.album_id = ?)",
+                argument: albumID.description
+            )
+        }
+        return statement
+    }
+
+    private static func ftsQuery(_ text: String) -> String {
+        text
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { "\"\($0.replacing("\"", with: "\"\""))\"" }
+            .joined(separator: " AND ")
+    }
+
     private static func scopeStatement(_ scope: AssetScope) -> ScopeStatement {
         switch scope {
         case .allAssets:
-            return ScopeStatement(fromAndWhereSQL: "FROM assets", arguments: [])
+            return ScopeStatement(fromSQL: "FROM assets", predicates: ["NOT EXISTS (SELECT 1 FROM asset_trash WHERE asset_trash.asset_id = assets.id)"])
         case .inbox:
             return ScopeStatement(
-                fromAndWhereSQL: """
-                    FROM assets
-                    WHERE assets.parent_folder_id = (
+                fromSQL: "FROM assets",
+                predicates: ["NOT EXISTS (SELECT 1 FROM asset_trash WHERE asset_trash.asset_id = assets.id)", """
+                    assets.parent_folder_id = (
                         SELECT id FROM folders WHERE system_kind = 'inbox'
                     )
-                    """,
-                arguments: []
+                    """]
             )
         case .favorites:
             return ScopeStatement(
-                fromAndWhereSQL: "FROM assets WHERE assets.favorite = 1",
-                arguments: []
+                fromSQL: "FROM assets",
+                predicates: ["NOT EXISTS (SELECT 1 FROM asset_trash WHERE asset_trash.asset_id = assets.id)", "assets.favorite = 1"]
             )
         case let .folder(folderID):
             return ScopeStatement(
-                fromAndWhereSQL: "FROM assets WHERE assets.parent_folder_id = ?",
+                fromSQL: "FROM assets",
+                predicates: ["NOT EXISTS (SELECT 1 FROM asset_trash WHERE asset_trash.asset_id = assets.id)", "assets.parent_folder_id = ?"],
                 arguments: [folderID.description]
             )
         case let .album(albumID):
             return ScopeStatement(
-                fromAndWhereSQL: """
-                    FROM assets
-                    JOIN album_assets ON album_assets.asset_id = assets.id
-                    WHERE album_assets.album_id = ?
-                    """,
+                fromSQL: "FROM assets JOIN album_assets ON album_assets.asset_id = assets.id",
+                predicates: ["NOT EXISTS (SELECT 1 FROM asset_trash WHERE asset_trash.asset_id = assets.id)", "album_assets.album_id = ?"],
                 arguments: [albumID.description]
             )
+        case let .tag(tagID):
+            return ScopeStatement(
+                fromSQL: "FROM assets JOIN asset_tags ON asset_tags.asset_id = assets.id",
+                predicates: ["NOT EXISTS (SELECT 1 FROM asset_trash WHERE asset_trash.asset_id = assets.id)", "asset_tags.tag_id = ?"],
+                arguments: [tagID.description]
+            )
+        case .trash:
+            return ScopeStatement(fromSQL: "FROM assets JOIN asset_trash ON asset_trash.asset_id = assets.id")
         }
     }
 }
@@ -276,13 +530,28 @@ private extension Array {
 }
 
 private struct ScopeStatement: Sendable {
-    let fromAndWhereSQL: String
-    let arguments: StatementArguments
-}
+    let fromSQL: String
+    private var predicates: [String]
+    var arguments: StatementArguments
 
-private extension AssetScope {
-    var isAlbum: Bool {
-        if case .album = self { return true }
-        return false
+    init(fromSQL: String, predicates: [String] = [], arguments: StatementArguments = []) {
+        self.fromSQL = fromSQL
+        self.predicates = predicates
+        self.arguments = arguments
+    }
+
+    var fromAndWhereSQL: String {
+        guard !predicates.isEmpty else { return fromSQL }
+        return "\(fromSQL) WHERE \(predicates.joined(separator: " AND "))"
+    }
+
+    mutating func append(_ predicate: String, argument: some DatabaseValueConvertible) {
+        predicates.append(predicate)
+        arguments += [argument]
+    }
+
+    mutating func append(_ predicate: String, arguments newArguments: StatementArguments) {
+        predicates.append(predicate)
+        arguments += newArguments
     }
 }

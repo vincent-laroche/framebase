@@ -1,18 +1,87 @@
 import Foundation
 
-public enum AssetScope: Hashable, Sendable {
+public enum AssetScope: Codable, Hashable, Sendable {
     case allAssets
     case inbox
     case favorites
     case folder(FolderID)
     case album(AlbumID)
+    case tag(TagID)
+    case trash
 }
 
-public struct AssetQuery: Hashable, Sendable {
+public struct AssetDateRange: Codable, Hashable, Sendable {
+    public var start: Date
+    public var end: Date
+
+    public init(start: Date, end: Date) {
+        self.start = min(start, end)
+        self.end = max(start, end)
+    }
+}
+
+/// Structured, local-only criteria applied in addition to an `AssetScope`.
+/// Tag and album sets use AND semantics: every supplied relationship must be
+/// present on a matching asset.
+public struct AssetSearchCriteria: Codable, Hashable, Sendable {
+    public var text: String?
+    public var folderPathText: String?
+    public var metadataText: String?
+    public var capturedDateRange: AssetDateRange?
+    public var rating: AssetRating?
+    public var favorite: Bool?
+    public var tagIDs: Set<TagID>
+    public var albumIDs: Set<AlbumID>
+
+    public init(
+        text: String? = nil,
+        folderPathText: String? = nil,
+        metadataText: String? = nil,
+        capturedDateRange: AssetDateRange? = nil,
+        rating: AssetRating? = nil,
+        favorite: Bool? = nil,
+        tagIDs: Set<TagID> = [],
+        albumIDs: Set<AlbumID> = []
+    ) {
+        self.text = Self.normalized(text)
+        self.folderPathText = Self.normalized(folderPathText)
+        self.metadataText = Self.normalized(metadataText)
+        self.capturedDateRange = capturedDateRange
+        self.rating = rating
+        self.favorite = favorite
+        self.tagIDs = tagIDs
+        self.albumIDs = albumIDs
+    }
+
+    public var isEmpty: Bool {
+        text == nil
+            && folderPathText == nil
+            && metadataText == nil
+            && capturedDateRange == nil
+            && rating == nil
+            && favorite == nil
+            && tagIDs.isEmpty
+            && albumIDs.isEmpty
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+public struct AssetQuery: Codable, Hashable, Sendable {
     public var scope: AssetScope
+    public var criteria: AssetSearchCriteria
 
     public init(scope: AssetScope) {
+        self.init(scope: scope, criteria: .init())
+    }
+
+    public init(scope: AssetScope, criteria: AssetSearchCriteria) {
         self.scope = scope
+        self.criteria = criteria
     }
 }
 
@@ -119,6 +188,7 @@ public struct CatalogChange: Sendable {
         case assets
         case folders
         case albums
+        case tags
         case settings
     }
 

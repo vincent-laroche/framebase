@@ -49,11 +49,16 @@ CREATE TABLE IF NOT EXISTS folders (
 CREATE TABLE IF NOT EXISTS assets (
     id TEXT PRIMARY KEY,
     blob_id TEXT NOT NULL REFERENCES blobs(id),
+    filename TEXT NOT NULL,
     display_name TEXT NOT NULL,
     folder_id TEXT NOT NULL REFERENCES folders(id),
     favorite INTEGER NOT NULL DEFAULT 0,
     rating INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active',
+    source_created_at TEXT NOT NULL,
+    source_modified_at TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     revision INTEGER NOT NULL

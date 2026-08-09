@@ -12,9 +12,15 @@ blobsRouter.post('/blobs/upload-initiate', requireAuth('assets.import'), async (
     originalExtension: string;
   }>();
 
-  if (!body.sha256 || !body.byteSize || !body.mediaType || !body.originalExtension) {
+  if (
+    !/^[a-f0-9]{64}$/.test(body.sha256) ||
+    !Number.isSafeInteger(body.byteSize) ||
+    body.byteSize <= 0 ||
+    !body.mediaType ||
+    !body.originalExtension
+  ) {
     return c.json(
-      { error: { code: 'INVALID_REQUEST', message: 'sha256, byteSize, mediaType, and originalExtension are required' } },
+      { error: { code: 'INVALID_REQUEST', message: 'sha256, positive byteSize, mediaType, and originalExtension are required' } },
       400
     );
   }
@@ -34,21 +40,36 @@ blobsRouter.post('/blobs/upload-initiate', requireAuth('assets.import'), async (
   return c.json({
     blobId: body.sha256,
     r2Key,
-    uploadUrl: `/v1/blobs/upload-direct?key=${encodeURIComponent(r2Key)}`,
+    uploadUrl: `/v1/blobs/upload-direct?blobId=${encodeURIComponent(body.sha256)}`,
     expiresAt: new Date(Date.now() + 900 * 1000).toISOString()
   });
 });
 
 blobsRouter.put('/blobs/upload-direct', requireAuth('assets.import'), async (c) => {
-  const key = c.req.query('key');
-  if (!key) {
-    return c.json({ error: { code: 'MISSING_KEY', message: 'key query param required' } }, 400);
+  const blobId = c.req.query('blobId');
+  if (!blobId) {
+    return c.json({ error: { code: 'MISSING_BLOB_ID', message: 'blobId query param required' } }, 400);
+  }
+
+  const blob = await c.env.DB.prepare('SELECT sha256, byte_size, r2_key FROM blobs WHERE id = ? OR sha256 = ?')
+    .bind(blobId, blobId)
+    .first<{ sha256: string; byte_size: number; r2_key: string }>();
+  if (!blob) {
+    return c.json({ error: { code: 'BLOB_NOT_FOUND', message: 'Blob not found' } }, 404);
   }
 
   const body = await c.req.arrayBuffer();
-  await c.env.BLOBS.put(key, body);
+  if (body.byteLength !== blob.byte_size) {
+    return c.json({ error: { code: 'BLOB_SIZE_MISMATCH', message: 'Uploaded byte size does not match the registered blob' } }, 409);
+  }
+  const digest = await crypto.subtle.digest('SHA-256', body);
+  const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  if (sha256 !== blob.sha256) {
+    return c.json({ error: { code: 'BLOB_CHECKSUM_MISMATCH', message: 'Uploaded bytes do not match the registered SHA-256' } }, 409);
+  }
+  await c.env.BLOBS.put(blob.r2_key, body);
 
-  return c.json({ status: 'uploaded', key, size: body.byteLength });
+  return c.json({ status: 'uploaded', key: blob.r2_key, size: body.byteLength });
 });
 
 blobsRouter.post('/blobs/upload-complete', requireAuth('assets.import'), async (c) => {
@@ -69,9 +90,16 @@ blobsRouter.post('/blobs/upload-complete', requireAuth('assets.import'), async (
     return c.json({ error: { code: 'BLOB_NOT_FOUND', message: 'Blob not found' } }, 404);
   }
 
+  if (!Number.isSafeInteger(body.byteSize) || body.byteSize !== blob.byte_size) {
+    return c.json({ error: { code: 'BLOB_SIZE_MISMATCH', message: 'Completed byte size does not match the registered blob' } }, 409);
+  }
+
   const head = await c.env.BLOBS.head(blob.r2_key);
   if (!head) {
     return c.json({ error: { code: 'R2_OBJECT_MISSING', message: 'Object missing in R2 storage' } }, 400);
+  }
+  if (head.size !== blob.byte_size) {
+    return c.json({ error: { code: 'BLOB_SIZE_MISMATCH', message: 'Stored byte size does not match the registered blob' } }, 409);
   }
 
   await c.env.DB.prepare("UPDATE blobs SET upload_state = 'verified' WHERE sha256 = ?")

@@ -45,6 +45,245 @@ struct CatalogDatabaseTests {
         #expect(snapshot == 1)
     }
 
+    @Test("Blob migration preserves existing Asset identity and immutable local storage")
+    func blobMigrationPreservesExistingAssets() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let asset = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAsset(asset, originalAvailable: true)
+
+        try await database.databasePool.write { db in
+            try db.execute(sql: "DROP TABLE asset_blobs")
+            try db.execute(sql: "DROP TABLE blobs")
+            try db.execute(
+                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
+                arguments: [FramebaseCatalogFoundation.blobMigrationIdentifier]
+            )
+        }
+        let reopened = try CatalogDatabase(catalogURL: temporary.databaseURL)
+
+        let persisted = try reopened.databasePool.read { db in
+            try Row.fetchOne(
+                db,
+                sql: "SELECT id, storage_key, original_available FROM assets WHERE id = ?",
+                arguments: [asset.id.description]
+            )
+        }
+        #expect(persisted?["id"] as String? == asset.id.description)
+        #expect(persisted?["storage_key"] as String? == asset.storageKey.rawValue)
+        #expect(persisted?["original_available"] as Bool? == true)
+
+        let tables = try await reopened.databasePool.read { db in
+            try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        #expect(tables.contains("blobs"))
+        #expect(tables.contains("asset_blobs"))
+    }
+
+    @Test("A verified Blob can be registered and linked without changing an Asset storage key")
+    func blobAssociationPreservesLocalAssetIdentity() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let asset = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAsset(asset)
+        let blob = Blob(
+            sha256: String(repeating: "a", count: 64),
+            byteSize: asset.fileSize,
+            mediaType: "image/jpeg",
+            originalExtension: "jpg",
+            r2Key: "blobs/sha256/aa/\(String(repeating: "a", count: 64)).jpg",
+            uploadState: .verified,
+            verificationETag: "fixture-etag",
+            verifiedAt: FixtureFactory.fixedDate,
+            createdAt: FixtureFactory.fixedDate
+        )
+
+        try await database.blobs.register(blob)
+        try await database.blobs.link(assetID: asset.id, toBlobSHA256: blob.sha256)
+
+        #expect(try await database.blobs.blob(sha256: blob.sha256) == blob)
+        #expect(try await database.blobs.blobSHA256(for: asset.id) == blob.sha256)
+        let persisted = try await database.databasePool.read { db in
+            try String.fetchOne(db, sql: "SELECT storage_key FROM assets WHERE id = ?", arguments: [asset.id.description])
+        }
+        #expect(persisted == asset.storageKey.rawValue)
+    }
+
+    @Test("Duplicate candidates are checksum evidence only")
+    func checksumDuplicateCandidates() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let first = try makeAsset(parentFolderID: database.inboxID)
+        let second = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAssets([first, second])
+        let digest = String(repeating: "b", count: 64)
+        let blob = Blob(sha256: digest, byteSize: first.fileSize, mediaType: "image/jpeg", originalExtension: "jpg", r2Key: "fixture", uploadState: .verified, verificationETag: nil, verifiedAt: nil, createdAt: FixtureFactory.fixedDate)
+        try await database.blobs.register(blob)
+        try await database.blobs.link(assetID: first.id, toBlobSHA256: digest)
+        try await database.blobs.link(assetID: second.id, toBlobSHA256: digest)
+
+        let candidates = try await database.blobs.duplicateCandidates()
+        #expect(candidates == [DuplicateCandidate(sha256: digest, assetIDs: [first.id, second.id].sorted { $0.description < $1.description })])
+        #expect(try await database.assets.asset(id: first.id)?.storageKey == first.storageKey)
+        #expect(try await database.assets.asset(id: second.id)?.storageKey == second.storageKey)
+    }
+
+    @Test("Tag migration preserves existing assets and bulk membership is transactional")
+    func tagsPreserveAssetsAndApplyAtomically() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let asset = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAsset(asset, originalAvailable: true)
+        let tag = try await database.tags.createTag(named: "Reference")
+        try await database.tags.addTags([tag.id], to: [asset.id])
+        try await database.tags.addTags([tag.id], to: [asset.id])
+        let count = try await database.databasePool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM asset_tags WHERE asset_id = ? AND tag_id = ?", arguments: [asset.id.description, tag.id.description])
+        }
+        #expect(count == 1)
+
+        do {
+            try await database.tags.addTags([tag.id, TagID()], to: [asset.id])
+            Issue.record("Expected invalid TagID to reject the full bulk operation")
+        } catch { }
+        let unchanged = try await database.databasePool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM asset_tags WHERE asset_id = ?", arguments: [asset.id.description])
+        }
+        #expect(unchanged == 1)
+        try await database.tags.removeTags([tag.id], from: [asset.id])
+        let removed = try await database.databasePool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM asset_tags WHERE asset_id = ?", arguments: [asset.id.description])
+        }
+        #expect(removed == 0)
+        #expect(try await database.assets.asset(id: asset.id)?.storageKey == asset.storageKey)
+    }
+
+    @Test("Tag migration upgrades a historical v2 catalog without changing existing library state")
+    func tagMigrationPreservesHistoricalV2Catalog() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let folder = try await database.folders.createFolder(named: FolderName("Existing Folder"), in: nil)
+        let asset = try makeAsset(parentFolderID: folder.id)
+        try await database.insertAsset(asset, originalAvailable: false)
+        let album = try await database.createAlbum(named: "Existing Album")
+        try await database.albums.addAssets([asset.id], to: album.id)
+        let originalCatalogID = database.catalogID
+        try await database.databasePool.write { db in
+            try db.execute(sql: "DROP TABLE asset_tags")
+            try db.execute(sql: "DROP TABLE tags")
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = ?", arguments: [FramebaseCatalogFoundation.tagMigrationIdentifier])
+        }
+
+        let reopened = try CatalogDatabase(catalogURL: temporary.databaseURL)
+
+        #expect(reopened.catalogID == originalCatalogID)
+        #expect(reopened.inboxID == database.inboxID)
+        #expect(try await reopened.assets.asset(id: asset.id)?.storageKey == asset.storageKey)
+        #expect(try await reopened.assets.asset(id: asset.id)?.parentFolderID == folder.id)
+        #expect(try await reopened.folders.treeSnapshot().folders.contains(where: { $0.id == folder.id }))
+        #expect(try await reopened.albums.albums().map(\.id) == [album.id])
+        let originalAvailability = try await reopened.databasePool.read { db in
+            try Bool.fetchOne(db, sql: "SELECT original_available FROM assets WHERE id = ?", arguments: [asset.id.description])
+        }
+        #expect(originalAvailability == false)
+        let tables = try await reopened.databasePool.read { db in
+            try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        #expect(tables.contains("tags"))
+        #expect(tables.contains("asset_tags"))
+    }
+
+    @Test("Tags normalize names, rename, and delete their logical memberships")
+    func tagLifecycle() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let asset = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAsset(asset)
+
+        let tag = try await database.tags.createTag(named: "  Campaign  ")
+        #expect(tag.name == "Campaign")
+        try await database.tags.addTags([tag.id], to: [asset.id])
+        try await database.tags.renameTag(tag.id, to: "Featured")
+        #expect(try await database.tags.tags().map(\.name) == ["Featured"])
+
+        let receipt = try await database.tags.deleteTag(tag.id)
+        #expect(try await database.tags.tags().isEmpty)
+        let membershipCount = try await database.databasePool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM asset_tags") ?? 0
+        }
+        #expect(membershipCount == 0)
+        #expect(try await database.assets.asset(id: asset.id)?.storageKey == asset.storageKey)
+
+        try await database.tags.restoreDeletedTag(using: receipt)
+        #expect(try await database.tags.tags().map(\.name) == ["Featured"])
+        let restoredMembershipCount = try await database.databasePool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM asset_tags") ?? 0
+        }
+        #expect(restoredMembershipCount == 1)
+    }
+
+    @Test("Local trash hides assets without changing their original identity and restores atomically")
+    func localTrashAndRestore() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let folder = try await database.folders.createFolder(named: FolderName("Reference"), in: nil)
+        let first = try makeAsset(parentFolderID: folder.id)
+        let second = try makeAsset(parentFolderID: folder.id)
+        try await database.insertAssets([first, second])
+
+        let receipt = try await database.assets.moveToTrash([first.id, second.id], retentionDays: 30)
+        #expect(Set(receipt.entries.map(\.assetID)) == [first.id, second.id])
+        let persistedEntries = try await database.assets.trashEntries(assetIDs: [first.id, second.id])
+        #expect(persistedEntries.map(\.assetID) == [first.id, second.id].sorted { $0.description < $1.description })
+        #expect(persistedEntries.allSatisfy { $0.expiresAt > $0.trashedAt })
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .allAssets)) == 0)
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .trash)) == 2)
+        #expect(try await database.assets.asset(id: first.id)?.storageKey == first.storageKey)
+        #expect(try await database.assets.asset(id: second.id)?.parentFolderID == folder.id)
+
+        try await database.assets.restoreFromTrash(using: receipt)
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .allAssets)) == 2)
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .trash)) == 0)
+    }
+
+    @Test("Logical asset moves create an exact undo receipt without changing originals")
+    func assetMoveReceiptRestoresPriorFolders() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let source = try await database.folders.createFolder(named: FolderName("Source"), in: nil)
+        let destination = try await database.folders.createFolder(named: FolderName("Destination"), in: nil)
+        let asset = try makeAsset(parentFolderID: source.id)
+        try await database.insertAsset(asset)
+
+        let receipt = try await database.assets.moveAssetsWithReceipt([asset.id], to: destination.id)
+        #expect(receipt.priorFolderByAssetID == [asset.id: source.id])
+        #expect(try await database.assets.asset(id: asset.id)?.parentFolderID == destination.id)
+        #expect(try await database.assets.asset(id: asset.id)?.storageKey == asset.storageKey)
+
+        let redoReceipt = try await database.assets.restoreAssetLocations(using: receipt)
+        #expect(redoReceipt.priorFolderByAssetID == [asset.id: destination.id])
+        #expect(try await database.assets.asset(id: asset.id)?.parentFolderID == source.id)
+        #expect(try await database.assets.asset(id: asset.id)?.storageKey == asset.storageKey)
+    }
+
+    @Test("Tag bulk mutations reject invalid assets without changing membership")
+    func tagBulkMutationRejectsInvalidAsset() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let asset = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAsset(asset)
+        let tag = try await database.tags.createTag(named: "Reference")
+
+        do {
+            try await database.tags.addTags([tag.id], to: [asset.id, AssetID()])
+            Issue.record("Expected invalid AssetID to reject the full bulk operation")
+        } catch { }
+        let membershipCount = try await database.databasePool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM asset_tags") ?? 0
+        }
+        #expect(membershipCount == 0)
+    }
+
     @Test("Schema enforces identifiers, names, ratings, and foreign keys")
     func schemaConstraints() async throws {
         let temporary = try TemporaryCatalog()
@@ -139,6 +378,9 @@ struct CatalogDatabaseTests {
         try await database.assets.updateFavorite(false, for: allAssetIDs)
 
         let chosen = assets[42]
+        let tag = try await database.tags.createTag(named: "Selected")
+        try await database.tags.addTags([tag.id], to: [chosen.id])
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .tag(tag.id))) == 1)
         try await database.assets.updateDisplayName("  Hero Portrait  ", for: chosen.id)
         try await database.assets.updateFavorite(true, for: [chosen.id])
         try await database.assets.updateRating(AssetRating(5), for: [chosen.id])
@@ -161,6 +403,143 @@ struct CatalogDatabaseTests {
         )
         #expect(movedPage.records.first?.originalAvailable == false)
         #expect(try await database.assets.count(matching: AssetQuery(scope: .favorites)) == 1)
+    }
+
+    @Test("Structured asset search combines indexed catalog fields without changing asset identity")
+    func structuredAssetSearch() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let marketing = try await database.folders.createFolder(named: FolderName("Marketing"), in: nil)
+        let campaigns = try await database.folders.createFolder(named: FolderName("Campaigns"), in: marketing.id)
+        let capturedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        var matching = try makeAsset(
+            parentFolderID: campaigns.id,
+            filename: "hero-portrait.jpg",
+            importedAt: capturedAt
+        )
+        matching.displayName = "Summer Hero"
+        matching.favorite = true
+        matching.rating = try AssetRating(5)
+        matching.metadata = AssetMetadata(
+            file: FileMetadata(filenameExtension: "jpg", typeIdentifier: "public.jpeg", mimeType: "image/jpeg"),
+            image: ImageMetadata(pixelWidth: 1_200, pixelHeight: 800, colorModel: "RGB"),
+            exif: EXIFMetadata(capturedAt: capturedAt, cameraMake: "Leica", cameraModel: "Q3")
+        )
+        let nonMatching = try makeAsset(parentFolderID: campaigns.id, filename: "detail.jpg", importedAt: capturedAt)
+        try await database.insertAssets([matching, nonMatching])
+        let album = try await database.albums.createAlbum(named: "Summer Launch")
+        let tag = try await database.tags.createTag(named: "Hero")
+        try await database.albums.addAssets([matching.id], to: album.id)
+        try await database.tags.addTags([tag.id], to: [matching.id])
+
+        let criteria = AssetSearchCriteria(
+            text: "summer",
+            folderPathText: "marketing/campaigns",
+            metadataText: "Leica",
+            capturedDateRange: AssetDateRange(start: capturedAt, end: capturedAt),
+            rating: try AssetRating(5),
+            favorite: true,
+            tagIDs: [tag.id],
+            albumIDs: [album.id]
+        )
+        let query = AssetQuery(scope: .allAssets, criteria: criteria)
+        let page = try await database.assets.page(
+            matching: query,
+            sortedBy: AssetSort(key: .displayName, direction: .ascending),
+            offset: 0,
+            limit: 10
+        )
+
+        #expect(page.totalCount == 1)
+        #expect(page.records.map(\.id) == [matching.id])
+        #expect(try await database.assets.asset(id: matching.id)?.storageKey == matching.storageKey)
+    }
+
+    @Test("Saved search rules survive catalog reopen and return their structured query")
+    func savedSearchPersistence() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let query = AssetQuery(
+            scope: .favorites,
+            criteria: AssetSearchCriteria(text: "summer", favorite: true)
+        )
+
+        let saved = try await database.savedSearches.createSavedSearch(named: "Summer Favorites", query: query)
+        try await database.savedSearches.renameSavedSearch(saved.id, to: "Pinned Summer")
+        let reopened = try CatalogDatabase(catalogURL: temporary.databaseURL)
+
+        let persisted = try #require(try await reopened.savedSearches.savedSearches().first)
+        #expect(persisted.id == saved.id)
+        #expect(persisted.name == "Pinned Summer")
+        #expect(persisted.query == query)
+    }
+
+    @Test("Smart-collection migration upgrades a historical v6 catalog without changing existing state")
+    func smartCollectionMigrationPreservesHistoricalV6Catalog() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let folder = try await database.folders.createFolder(named: FolderName("Existing Folder"), in: nil)
+        let asset = try makeAsset(parentFolderID: folder.id)
+        try await database.insertAsset(asset, originalAvailable: false)
+        let savedQuery = AssetQuery(scope: .folder(folder.id), criteria: AssetSearchCriteria(text: "existing"))
+        let savedSearch = try await database.savedSearches.createSavedSearch(named: "Existing Rule", query: savedQuery)
+        let originalCatalogID = database.catalogID
+
+        try await database.databasePool.write { db in
+            try db.execute(sql: "DROP TABLE smart_collections")
+            try db.execute(
+                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
+                arguments: [FramebaseCatalogFoundation.smartCollectionMigrationIdentifier]
+            )
+        }
+
+        let reopened = try CatalogDatabase(catalogURL: temporary.databaseURL)
+        #expect(reopened.catalogID == originalCatalogID)
+        #expect(reopened.inboxID == database.inboxID)
+        #expect(try await reopened.assets.asset(id: asset.id)?.storageKey == asset.storageKey)
+        #expect(try await reopened.assets.asset(id: asset.id)?.parentFolderID == folder.id)
+        #expect(try await reopened.folders.treeSnapshot().folders.contains(where: { $0.id == folder.id }))
+        #expect(try await reopened.savedSearches.savedSearches().map(\.id) == [savedSearch.id])
+        #expect(try await reopened.smartCollections.smartCollections().isEmpty)
+        let tables = try await reopened.databasePool.read { db in
+            try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        #expect(tables.contains("smart_collections"))
+    }
+
+    @Test("Smart collections persist their rules and resolve members without materializing asset state")
+    func smartCollectionPersistenceAndMembership() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let matching = try makeAsset(parentFolderID: database.inboxID)
+        let nonMatching = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAssets([matching, nonMatching])
+        try await database.assets.updateFavorite(true, for: [matching.id])
+
+        let query = AssetQuery(scope: .allAssets, criteria: AssetSearchCriteria(favorite: true))
+        let smartCollection = try await database.smartCollections.createSmartCollection(
+            named: "Favorites Rule",
+            query: query
+        )
+        let matchingPage = try await database.assets.page(
+            matching: smartCollection.query,
+            sortedBy: .defaultSort,
+            offset: 0,
+            limit: 20
+        )
+        #expect(matchingPage.records.map(\.id) == [matching.id])
+        #expect(try await database.assets.asset(id: nonMatching.id)?.storageKey == nonMatching.storageKey)
+
+        try await database.smartCollections.renameSmartCollection(smartCollection.id, to: "Pinned Favorites")
+        let reopened = try CatalogDatabase(catalogURL: temporary.databaseURL)
+        let persisted = try #require(try await reopened.smartCollections.smartCollections().first)
+        #expect(persisted.id == smartCollection.id)
+        #expect(persisted.name == "Pinned Favorites")
+        #expect(persisted.query == query)
+
+        try await reopened.smartCollections.deleteSmartCollection(persisted.id)
+        #expect(try await reopened.smartCollections.smartCollections().isEmpty)
+        #expect(try await reopened.assets.asset(id: matching.id)?.storageKey == matching.storageKey)
     }
 
     @Test("Asset batch insertion is atomic")
@@ -437,7 +816,57 @@ struct CatalogDatabaseTests {
         #expect(membershipCount == 0)
     }
 
-    @Test("Folder and album observations publish committed snapshots")
+    @Test("Album reorder requires an exact permutation and persists atomically")
+    func albumReorderPersistsAtomically() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let first = try await database.albums.createAlbum(named: "First")
+        let second = try await database.albums.createAlbum(named: "Second")
+        let third = try await database.albums.createAlbum(named: "Third")
+
+        try await database.albums.reorderAlbums([third.id, first.id, second.id])
+        #expect(try await database.albums.albums().map(\.id) == [third.id, first.id, second.id])
+
+        do {
+            try await database.albums.reorderAlbums([first.id, third.id])
+            Issue.record("A missing album must reject the complete reorder")
+        } catch CatalogError.invalidAlbumOrder { }
+        catch {
+            Issue.record("Unexpected reorder error: \(error)")
+        }
+        #expect(try await database.albums.albums().map(\.id) == [third.id, first.id, second.id])
+
+        let reopened = try CatalogDatabase(catalogURL: temporary.databaseURL)
+        #expect(try await reopened.albums.albums().map(\.id) == [third.id, first.id, second.id])
+    }
+
+    @Test("Album deletion receipt restores the album and its logical memberships")
+    func albumDeletionReceiptRestoresMemberships() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let folder = try await database.folders.createFolder(named: FolderName("Source"), in: nil)
+        let first = try makeAsset(parentFolderID: folder.id)
+        let second = try makeAsset(parentFolderID: folder.id)
+        try await database.insertAssets([first, second])
+        let album = try await database.albums.createAlbum(named: "Campaign")
+        try await database.albums.addAssets([first.id, second.id], to: album.id)
+        let persistedAlbum = try #require(try await database.albums.albums().first)
+
+        let receipt: AlbumDeletionReceipt = try await database.albums.deleteAlbum(album.id)
+        #expect(receipt.album == persistedAlbum)
+        let expectedMembershipIDs = [first.id, second.id].sorted { $0.description < $1.description }
+        let restoredMembershipIDs = receipt.memberships.map(\.assetID).sorted { $0.description < $1.description }
+        #expect(restoredMembershipIDs == expectedMembershipIDs)
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .album(album.id))) == 0)
+        #expect(try await database.assets.asset(id: first.id)?.storageKey == first.storageKey)
+        #expect(try await database.assets.asset(id: second.id)?.storageKey == second.storageKey)
+
+        try await database.albums.restoreDeletedAlbum(using: receipt)
+        #expect(try await database.albums.albums().contains(persistedAlbum))
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .album(album.id))) == 2)
+    }
+
+    @Test("Folder, album, and tag observations publish committed snapshots")
     func observations() async throws {
         let temporary = try TemporaryCatalog()
         let database = temporary.database
@@ -455,6 +884,13 @@ struct CatalogDatabaseTests {
         let album = try await database.createAlbum(named: "Observed Album")
         let changedAlbums = try #require(try await albumIterator.next())
         #expect(changedAlbums.map(\.id) == [album.id])
+
+        var tagIterator = database.tags.observeTags().makeAsyncIterator()
+        let initialTags = try #require(try await tagIterator.next())
+        #expect(initialTags.isEmpty)
+        let tag = try await database.tags.createTag(named: "Observed Tag")
+        let changedTags = try #require(try await tagIterator.next())
+        #expect(changedTags.map(\.id) == [tag.id])
 
         var assetIterator = database.assets
             .observe(matching: AssetQuery(scope: .allAssets))

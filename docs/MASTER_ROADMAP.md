@@ -405,7 +405,9 @@ Permanent purge is never included in a general write scope.
 
 ## Phase 3 — Cloud-backed library, image delivery, and offline sync
 
-**Status:** Planned.
+**Status:** Implemented locally; final native UI evidence runs only on the
+isolated macOS CI runner because local desktop automation is deliberately
+disabled.
 
 **User-visible outcome:** The Mac app can opt a library into cloud backing, upload originals safely, stay responsive from local SQLite, work offline, and display cloud-derived thumbnails/previews.
 
@@ -734,4 +736,3 @@ Platform behavior and limits below were verified from primary documentation on 2
 - [Cloudflare AI Gateway fallbacks](https://developers.cloudflare.com/ai-gateway/configuration/fallbacks/)
 - [Cloudflare Workers observability](https://developers.cloudflare.com/workers/observability/)
 - [Apple replicated File Provider extension](https://developer.apple.com/documentation/fileprovider/nsfileproviderreplicatedextension)
-

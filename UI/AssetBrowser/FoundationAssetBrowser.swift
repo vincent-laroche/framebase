@@ -2,48 +2,315 @@ import AppKit
 import FramebaseDomain
 import SwiftUI
 
+enum AssetBrowserPresentation: String, CaseIterable, Identifiable {
+    case grid
+    case list
+
+    var id: String { rawValue }
+    var title: String { self == .grid ? "Grid" : "List" }
+    var systemImage: String { self == .grid ? "square.grid.2x2" : "list.bullet" }
+}
+
 struct FoundationAssetBrowser: View {
     let model: LibraryWindowModel
+    let searchText: Binding<String>
 
     var body: some View {
-        Group {
-            switch model.container.libraryState {
-            case .notConfigured, .failed:
-                LibrarySetupView(container: model.container)
-            case .opening:
-                ProgressView("Opening Framebase Library…")
-                    .controlSize(.large)
-            case .ready:
-                if model.orderedVisibleAssetIDs.isEmpty {
-                    ContentUnavailableView {
-                        Label(model.navigationTitle, systemImage: "photo.stack")
-                    } description: {
-                        Text("No assets match this destination.")
+        VStack(spacing: 0) {
+            HStack {
+                TextField("Search Library", text: searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("assetBrowser.search")
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            Group {
+                switch model.container.libraryState {
+                case .notConfigured, .failed:
+                    LibrarySetupView(container: model.container)
+                case .opening:
+                    ProgressView("Opening Framebase Library…")
+                        .controlSize(.large)
+                case .ready:
+                    if model.orderedVisibleAssetIDs.isEmpty {
+                        ContentUnavailableView {
+                            Label(model.navigationTitle, systemImage: "photo.stack")
+                        } description: {
+                            Text("No assets match this destination.")
+                        }
+                        .accessibilityIdentifier("assetBrowser.empty.\(model.navigationTarget.title)")
+                    } else {
+                        switch model.browserPresentation {
+                        case .grid:
+                            NativeAssetCollection(
+                                records: model.assetGridRecords,
+                                thumbnailStates: model.thumbnailStates,
+                                selectedAssetIDs: model.selectedAssetIDs,
+                                thumbnailSize: model.thumbnailSize,
+                                onSelectionChanged: { ids, anchorID in
+                                    model.selectedAssetIDs = ids
+                                    model.selectionAnchorID = anchorID
+                                    model.keyboardFocusedAssetID = anchorID
+                                },
+                                onRequestThumbnail: { record, scale in
+                                    model.requestThumbnail(for: record, displayScale: scale)
+                                },
+                                onCancelThumbnail: model.cancelThumbnail,
+                                onNearEnd: model.loadNextAssetPageIfNeeded,
+                                onSelectAll: model.selectAllVisibleAssets
+                            )
+                            .accessibilityIdentifier("assetBrowser.grid")
+                        case .list:
+                            NativeAssetTable(
+                                records: model.assetGridRecords,
+                                selectedAssetIDs: model.selectedAssetIDs,
+                                onSelectionChanged: { ids, anchorID in
+                                    model.selectedAssetIDs = ids
+                                    model.selectionAnchorID = anchorID
+                                    model.keyboardFocusedAssetID = anchorID
+                                },
+                                onNearEnd: model.loadNextAssetPageIfNeeded,
+                                onSelectAll: model.selectAllVisibleAssets
+                            )
+                            .accessibilityIdentifier("assetBrowser.list")
+                        }
                     }
-                    .accessibilityIdentifier("assetBrowser.empty.\(model.navigationTarget.title)")
-                } else {
-                    NativeAssetCollection(
-                        records: model.assetGridRecords,
-                        thumbnailStates: model.thumbnailStates,
-                        selectedAssetIDs: model.selectedAssetIDs,
-                        thumbnailSize: model.thumbnailSize,
-                        onSelectionChanged: { ids, anchorID in
-                            model.selectedAssetIDs = ids
-                            model.selectionAnchorID = anchorID
-                            model.keyboardFocusedAssetID = anchorID
-                        },
-                        onRequestThumbnail: { record, scale in
-                            model.requestThumbnail(for: record, displayScale: scale)
-                        },
-                        onCancelThumbnail: model.cancelThumbnail,
-                        onNearEnd: model.loadNextAssetPageIfNeeded,
-                        onSelectAll: model.selectAllVisibleAssets
-                    )
-                    .accessibilityIdentifier("assetBrowser.grid")
                 }
             }
         }
         .navigationTitle(model.navigationTitle)
+    }
+}
+
+@MainActor
+private final class AssetTableView: NSTableView {
+    var onSelectAll: (() -> Void)?
+
+    override func selectAll(_ sender: Any?) {
+        guard let onSelectAll else {
+            super.selectAll(sender)
+            return
+        }
+        onSelectAll()
+    }
+}
+
+@MainActor
+private struct NativeAssetTable: NSViewRepresentable {
+    let records: [AssetGridRecord]
+    let selectedAssetIDs: Set<AssetID>
+    let onSelectionChanged: (Set<AssetID>, AssetID?) -> Void
+    let onNearEnd: (Int) -> Void
+    let onSelectAll: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let tableView = AssetTableView()
+        tableView.delegate = context.coordinator
+        tableView.dataSource = context.coordinator
+        tableView.allowsMultipleSelection = true
+        tableView.allowsEmptySelection = true
+        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.rowSizeStyle = .medium
+        tableView.registerForDraggedTypes([.framebaseAssets])
+        tableView.setDraggingSourceOperationMask(.move, forLocal: true)
+        tableView.onSelectAll = { [weak coordinator = context.coordinator] in coordinator?.parent.onSelectAll() }
+        Self.columns.forEach { tableView.addTableColumn($0.tableColumn) }
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = tableView
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        context.coordinator.tableView = tableView
+        context.coordinator.apply(parent: self, reloadAll: true)
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.scrollViewDidScroll),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        let priorIDs = context.coordinator.parent.records.map(\.id)
+        context.coordinator.apply(parent: self, reloadAll: priorIDs != records.map(\.id))
+    }
+
+    static let columns: [AssetTableColumn] = [.name, .dimensions, .size, .modified, .rating, .favorite]
+
+    enum AssetTableColumn: String, CaseIterable {
+        case name, dimensions, size, modified, rating, favorite
+
+        var title: String {
+            switch self {
+            case .name: "Name"
+            case .dimensions: "Dimensions"
+            case .size: "Size"
+            case .modified: "Modified"
+            case .rating: "Rating"
+            case .favorite: "Favorite"
+            }
+        }
+
+        var width: CGFloat {
+            switch self {
+            case .name: 260
+            case .dimensions: 110
+            case .size: 90
+            case .modified: 160
+            case .rating: 70
+            case .favorite: 80
+            }
+        }
+
+        @MainActor var tableColumn: NSTableColumn {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(rawValue))
+            column.title = title
+            column.width = width
+            column.minWidth = width == 260 ? 180 : 60
+            column.resizingMask = self == .name ? .autoresizingMask : .userResizingMask
+            return column
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        var parent: NativeAssetTable
+        weak var tableView: AssetTableView?
+        private var isSynchronizingSelection = false
+        private var activeDragToken: UUID?
+
+        init(parent: NativeAssetTable) { self.parent = parent }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        func apply(parent: NativeAssetTable, reloadAll: Bool) {
+            self.parent = parent
+            guard let tableView else { return }
+            if reloadAll {
+                tableView.reloadData()
+            } else {
+                let visibleRows = tableView.rows(in: tableView.visibleRect)
+                if visibleRows.location != NSNotFound {
+                    tableView.reloadData(
+                        forRowIndexes: IndexSet(integersIn: visibleRows.location..<NSMaxRange(visibleRows)),
+                        columnIndexes: IndexSet(integersIn: 0..<tableView.numberOfColumns)
+                    )
+                }
+            }
+            synchronizeSelection()
+            publishNearEndIfNeeded()
+        }
+
+        func numberOfRows(in tableView: NSTableView) -> Int { parent.records.count }
+
+        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+            guard row < parent.records.count,
+                  let columnID = tableColumn?.identifier.rawValue,
+                  let column = AssetTableColumn(rawValue: columnID) else { return nil }
+            let identifier = NSUserInterfaceItemIdentifier("asset-table.\(columnID)")
+            let cell = (tableView.makeView(withIdentifier: identifier, owner: nil) as? NSTableCellView) ?? {
+                let created = NSTableCellView()
+                created.identifier = identifier
+                let textField = NSTextField(labelWithString: "")
+                textField.lineBreakMode = .byTruncatingTail
+                textField.translatesAutoresizingMaskIntoConstraints = false
+                created.addSubview(textField)
+                created.textField = textField
+                NSLayoutConstraint.activate([
+                    textField.leadingAnchor.constraint(equalTo: created.leadingAnchor, constant: 6),
+                    textField.trailingAnchor.constraint(equalTo: created.trailingAnchor, constant: -6),
+                    textField.centerYAnchor.constraint(equalTo: created.centerYAnchor),
+                ])
+                return created
+            }()
+            cell.textField?.stringValue = value(for: parent.records[row], column: column)
+            return cell
+        }
+
+        func tableViewSelectionDidChange(_ notification: Notification) {
+            guard !isSynchronizingSelection, let tableView else { return }
+            let ids = Set(tableView.selectedRowIndexes.compactMap { row in
+                row < parent.records.count ? parent.records[row].id : nil
+            })
+            let anchor = tableView.selectedRowIndexes.last.flatMap { row in
+                row < parent.records.count ? parent.records[row].id : nil
+            }
+            parent.onSelectionChanged(ids, anchor ?? ids.first)
+        }
+
+        func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+            guard row < parent.records.count else { return nil }
+            let selectedIDs = Set(tableView.selectedRowIndexes.compactMap { index in
+                index < parent.records.count ? parent.records[index].id : nil
+            })
+            let draggedIDs: Set<AssetID> = selectedIDs.isEmpty ? [parent.records[row].id] : selectedIDs
+            if activeDragToken == nil {
+                activeDragToken = AssetDragSessionRegistry.create(assetIDs: draggedIDs)
+            }
+            guard let activeDragToken else { return nil }
+            let item = NSPasteboardItem()
+            item.setString(activeDragToken.uuidString, forType: .framebaseAssets)
+            return item
+        }
+
+        func tableView(
+            _ tableView: NSTableView,
+            draggingSession session: NSDraggingSession,
+            endedAt screenPoint: NSPoint,
+            operation: NSDragOperation
+        ) {
+            if let activeDragToken {
+                AssetDragSessionRegistry.remove(activeDragToken)
+                self.activeDragToken = nil
+            }
+        }
+
+        @objc func scrollViewDidScroll(_ notification: Notification) {
+            publishNearEndIfNeeded()
+        }
+
+        private func synchronizeSelection() {
+            guard let tableView else { return }
+            var rows = IndexSet()
+            for (index, record) in parent.records.enumerated() where parent.selectedAssetIDs.contains(record.id) {
+                rows.insert(index)
+            }
+            guard rows != tableView.selectedRowIndexes else { return }
+            isSynchronizingSelection = true
+            tableView.selectRowIndexes(rows, byExtendingSelection: false)
+            isSynchronizingSelection = false
+        }
+
+        private func publishNearEndIfNeeded() {
+            guard let tableView, parent.records.count > 0 else { return }
+            let visibleRows = tableView.rows(in: tableView.visibleRect)
+            guard visibleRows.location != NSNotFound else { return }
+            let lastVisibleRow = min(parent.records.count - 1, NSMaxRange(visibleRows) - 1)
+            parent.onNearEnd(max(0, lastVisibleRow))
+        }
+
+        private func value(for record: AssetGridRecord, column: AssetTableColumn) -> String {
+            return switch column {
+            case .name: record.displayName
+            case .dimensions:
+                if let width = record.width, let height = record.height {
+                    "\(width) × \(height)"
+                } else {
+                    "—"
+                }
+            case .size: ByteCountFormatter.string(fromByteCount: record.fileSize, countStyle: .file)
+            case .modified: record.modifiedAt.formatted(date: .abbreviated, time: .shortened)
+            case .rating: record.rating.rawValue == 0 ? "—" : "\(record.rating.rawValue) ★"
+            case .favorite: record.favorite ? "Yes" : ""
+            }
+        }
     }
 }
 

@@ -26,6 +26,7 @@ struct FoundationInspector: View {
                             Button("Favorite All") { Task { await model.setFavorite(true) } }
                             Button("Unfavorite All") { Task { await model.setFavorite(false) } }
                         }
+                        tagEditingControls
                     }
                 }
                 .formStyle(.grouped)
@@ -49,6 +50,9 @@ struct FoundationInspector: View {
             }
 
             Section("File") {
+                AssetDisplayNameEditor(asset: asset) { proposedName in
+                    Task { await model.renameSelectedAsset(to: proposedName) }
+                }
                 LabeledContent("Name", value: asset.filename)
                 LabeledContent("Folder", value: folderName(asset.parentFolderID))
                 LabeledContent("Dimensions", value: dimensions(asset))
@@ -68,6 +72,22 @@ struct FoundationInspector: View {
                     ForEach(1...5, id: \.self) { value in
                         Text("\(value) star\(value == 1 ? "" : "s")").tag(value)
                     }
+                }
+                tagEditingControls
+            }
+
+            if let trashEntry = model.trashEntriesByAssetID[asset.id] {
+                Section("Trash") {
+                    LabeledContent("Restore by", value: formatted(trashEntry.expiresAt))
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        LabeledContent(
+                            "Time remaining",
+                            value: retentionCountdown(until: trashEntry.expiresAt, now: context.date)
+                        )
+                    }
+                    Text("The original remains in its managed location. Framebase does not purge it automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -120,6 +140,16 @@ struct FoundationInspector: View {
                 if let first = assets.map(\.createdAt).min(), let last = assets.map(\.createdAt).max() {
                     LabeledContent("Date range", value: "\(formatted(first)) – \(formatted(last))")
                 }
+                let expiryDates = assets.compactMap { model.trashEntriesByAssetID[$0.id]?.expiresAt }
+                if let nextExpiry = expiryDates.min() {
+                    LabeledContent("Next restore deadline", value: formatted(nextExpiry))
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        LabeledContent(
+                            "Next deadline in",
+                            value: retentionCountdown(until: nextExpiry, now: context.date)
+                        )
+                    }
+                }
             }
 
             Section("Apply to selection") {
@@ -133,6 +163,7 @@ struct FoundationInspector: View {
                         Text("\(value) star\(value == 1 ? "" : "s")").tag(value)
                     }
                 }
+                tagEditingControls
             }
         }
         .formStyle(.grouped)
@@ -179,6 +210,29 @@ struct FoundationInspector: View {
         )
     }
 
+    @ViewBuilder
+    private var tagEditingControls: some View {
+        if model.tags.isEmpty {
+            Text("Create a tag from File to organize this selection.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Menu("Add Tag") {
+                ForEach(model.tags) { tag in
+                    Button(tag.name) { Task { await model.addTag(tag.id) } }
+                }
+            }
+            .accessibilityIdentifier("inspector.addTag")
+
+            Menu("Remove Tag") {
+                ForEach(model.tags) { tag in
+                    Button(tag.name) { Task { await model.removeTag(tag.id) } }
+                }
+            }
+            .accessibilityIdentifier("inspector.removeTag")
+        }
+    }
+
     private func ratingBinding(_ value: Int) -> Binding<Int> {
         Binding(
             get: { value },
@@ -208,6 +262,35 @@ struct FoundationInspector: View {
 
     private func formatted(_ date: Date) -> String {
         date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func retentionCountdown(until expiry: Date, now: Date) -> String {
+        guard expiry > now else { return "Restore window elapsed" }
+        let components = Calendar.current.dateComponents([.day, .hour, .minute], from: now, to: expiry)
+        let days = components.day ?? 0
+        let hours = components.hour ?? 0
+        let minutes = components.minute ?? 0
+        if days > 0 { return "\(days)d \(hours)h remaining" }
+        if hours > 0 { return "\(hours)h \(minutes)m remaining" }
+        return "\(max(minutes, 1))m remaining"
+    }
+}
+
+private struct AssetDisplayNameEditor: View {
+    let asset: Asset
+    let onRename: (String) -> Void
+    @State private var proposedName: String
+
+    init(asset: Asset, onRename: @escaping (String) -> Void) {
+        self.asset = asset
+        self.onRename = onRename
+        _proposedName = State(initialValue: asset.displayName)
+    }
+
+    var body: some View {
+        TextField("Display name", text: $proposedName)
+            .onSubmit { onRename(proposedName) }
+            .accessibilityIdentifier("inspector.assetDisplayName")
     }
 }
 

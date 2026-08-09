@@ -37,6 +37,18 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build-for-testing
 
+      - name: Run native UI tests in isolated macOS CI
+        run: |
+          xcodebuild \
+            -project Framebase.xcodeproj \
+            -scheme Framebase \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            test \
+            -only-testing:FramebaseUITests
+
       - name: Smoke-launch Framebase
         run: |
           open -n DerivedData/Build/Products/Debug/Framebase.app

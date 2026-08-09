@@ -1,4 +1,5 @@
 import AppKit
+import FramebaseAPIClient
 import FramebaseMedia
 import SwiftUI
 
@@ -9,6 +10,11 @@ struct FramebaseSettingsView: View {
     @AppStorage("browser.thumbnailSize") private var thumbnailSize = 176.0
     @State private var isClearingCache = false
     @State private var message: String?
+    @State private var enrollmentSecret = ""
+    @State private var isEnrolling = false
+    @State private var isCheckingHealth = false
+    @State private var healthResult: String?
+    @AppStorage("framebase.cloudSyncEnabled") private var cloudSyncEnabled = false
 
     var body: some View {
         TabView {
@@ -80,7 +86,7 @@ struct FramebaseSettingsView: View {
                 }
 
                 Section("Scope") {
-                    LabeledContent("Network", value: "Disabled")
+                    LabeledContent("Network", value: networkScopeDescription)
                     LabeledContent("Original storage", value: "Managed locally")
                     LabeledContent("Permanent deletion", value: "Not implemented")
                 }
@@ -89,8 +95,102 @@ struct FramebaseSettingsView: View {
             .tabItem {
                 Label("Diagnostics", systemImage: "stethoscope")
             }
+
+            Form {
+                Section("Device Enrollment") {
+                    LabeledContent("Status", value: enrollmentStatusDescription)
+
+                    if !isEnrolled {
+                        SecureField("Enrollment secret", text: $enrollmentSecret)
+                    }
+
+                    HStack {
+                        if isEnrolled {
+                            Button("Forget Device", role: .destructive) {
+                                forgetDevice()
+                            }
+                            .disabled(isEnrolling)
+                        } else {
+                            Button("Enroll This Mac") {
+                                enroll()
+                            }
+                            .disabled(enrollmentSecret.isEmpty || isEnrolling)
+                        }
+
+                        if isEnrolling {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+
+                    Text(
+                        "Paste the value of FRAMEBASE_API_DEV_ENROLLMENT_SECRET from ~/.env. " +
+                        "The secret itself is never stored — only the resulting session token, in Keychain."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                Section("Connection") {
+                    HStack {
+                        Button("Check Health") {
+                            checkHealth()
+                        }
+                        .disabled(isCheckingHealth)
+
+                        if isCheckingHealth {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+
+                    if let healthResult {
+                        Text(healthResult)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Library Sync") {
+                    Toggle("Sync this library's folders and ratings to the cloud", isOn: $cloudSyncEnabled)
+                        .disabled(!isEnrolled)
+                        .onChange(of: cloudSyncEnabled) {
+                            Task { await container.refreshCatalogSyncActivation() }
+                        }
+
+                    if let rootURL = container.libraryRootURL {
+                        Text("Applies to the open library: \(rootURL.lastPathComponent)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(
+                        "When on and this Mac is enrolled, folder names, ratings, and favorites for the " +
+                        "open library sync to framebase-api-dev. Original photo files are never uploaded, " +
+                        "on or off."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Text(
+                        "This is a Phase 2 development surface for framebase-api-dev. Enrolling alone " +
+                        "never syncs anything — Library Sync above is a separate switch, off by default."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+            .tabItem {
+                Label("Cloud (Dev)", systemImage: "icloud")
+            }
+            .task {
+                await container.refreshEnrollmentStatus()
+            }
         }
-        .frame(width: 560, height: 390)
+        .frame(width: 560, height: 460)
         .scenePadding()
         .onChange(of: diskLimitGB) {
             do {
@@ -123,6 +223,71 @@ struct FramebaseSettingsView: View {
                 message = error.localizedDescription
             }
             isClearingCache = false
+        }
+    }
+
+    private var isEnrolled: Bool {
+        switch container.enrollmentStatus {
+        case .enrolled, .expired: true
+        case .notEnrolled: false
+        }
+    }
+
+    private var enrollmentStatusDescription: String {
+        switch container.enrollmentStatus {
+        case .notEnrolled:
+            "Not enrolled"
+        case .enrolled(let deviceId, let expiresAt):
+            "Enrolled as \(deviceId.prefix(8))… · expires \(expiresAt.formatted(date: .abbreviated, time: .shortened))"
+        case .expired(let deviceId):
+            "Expired · device \(deviceId.prefix(8))… needs re-enrollment"
+        }
+    }
+
+    private var networkScopeDescription: String {
+        isEnrolled ? "Dev cloud enrollment only" : "Disabled"
+    }
+
+    private func enroll() {
+        isEnrolling = true
+        Task {
+            do {
+                try await container.enrollDevice(
+                    enrollmentSecret: enrollmentSecret,
+                    deviceName: Host.current().localizedName ?? "This Mac"
+                )
+                enrollmentSecret = ""
+                message = "Enrolled successfully."
+            } catch {
+                message = error.localizedDescription
+            }
+            isEnrolling = false
+        }
+    }
+
+    private func forgetDevice() {
+        isEnrolling = true
+        Task {
+            do {
+                try await container.forgetDevice()
+                message = "Device credential removed."
+            } catch {
+                message = error.localizedDescription
+            }
+            isEnrolling = false
+        }
+    }
+
+    private func checkHealth() {
+        isCheckingHealth = true
+        Task {
+            do {
+                let health = try await container.checkCloudHealth()
+                healthResult = "Status: \(health.status) · DB: \(health.db) · v\(health.version)"
+            } catch {
+                healthResult = error.localizedDescription
+            }
+            isCheckingHealth = false
         }
     }
 

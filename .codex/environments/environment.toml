@@ -6,11 +6,11 @@ name = "Framebase"
 script = ""
 
 [[actions]]
-name = "Verify"
+name = "Headless Verify"
 icon = "tool"
 command = "./script/build_and_run.sh --verify"
 
 [[actions]]
 name = "Test"
 icon = "tool"
-command = "swift test --package-path Packages/FramebaseKit"
+command = "./script/build_and_run.sh --test"
