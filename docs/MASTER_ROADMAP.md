@@ -175,6 +175,186 @@ flowchart LR
     WF --> VEC
 ```
 
+## Integration adapter architecture
+
+This is target architecture, not an implemented integration layer. Framebase is
+the authoritative media system of record: a private visual asset-management
+system that combines a logical catalog with immutable-original storage, media
+delivery, transformations and derivatives, metadata, folders, albums, tags,
+search, intelligence, workflows, audit history, access control, and
+agent-accessible capabilities. It is not a generic “Media Bridge,” and it does
+not need a separate generic Media Bridge service between Framebase and other
+applications.
+
+Cloudflare R2, caches, transformations, thumbnails, previews, and authorized
+delivery are lower-level data-plane infrastructure. R2 stores immutable bytes;
+delivery infrastructure serves authorized originals or derivatives; the
+Framebase catalog and domain layer determine what an Asset means. Folder names,
+logical organization, metadata, tags, albums, workflow state, audit history,
+permissions, and revisions are Framebase concepts, not R2 concepts. The
+existing Blob-versus-Asset distinction is therefore an integration boundary as
+well as a storage boundary: integrations identify a logical Asset by its stable
+Framebase ID, not by a filename or R2 key.
+
+```mermaid
+flowchart TB
+    subgraph FB["Framebase — authoritative media system of record"]
+        CP["Control plane<br/>assets, metadata, folders, tags, albums, search,<br/>workflows, audit, permissions, revisions"]
+        DP["Data plane<br/>immutable R2 blobs, derivatives, thumbnails,<br/>previews, exports, authorized delivery"]
+        DOMAIN["Canonical Framebase domain and capability layer"]
+        API["Versioned Framebase API / OpenAPI contract"]
+        CP --> DOMAIN
+        DP --> DOMAIN
+        DOMAIN --> API
+    end
+
+    API --> FINDER["Finder File Provider adapter"]
+    API --> HUBSPOT["HubSpot adapter"]
+    API --> SHOPIFY["Shopify adapter"]
+    API --> MCPADAPTER["MCP server"]
+    API --> CLIADAPTER["CLI"]
+    API --> OTHER["Other application adapters / SDKs"]
+```
+
+### One canonical capability surface
+
+Framebase will expose its domain capabilities through one versioned API/OpenAPI
+contract. The Mac app, sync engine, Finder adapter, workflows, CLI, MCP server,
+and future external adapters must use the same domain/use-case layer rather
+than independently reimplementing Framebase rules. The endpoint inventory is
+intentionally not finalized here; representative capabilities include search
+and inspection, import, folder creation, logical move and rename, tagging and
+album membership, thumbnail/preview requests, authorized original download,
+derivative creation, trash and restore, workflow/intelligence operations, and
+audit inspection.
+
+The deliberate external interfaces are:
+
+- **REST / OpenAPI:** the canonical application-integration contract.
+- **Finder File Provider:** the native macOS file-access interface, retaining
+  catalog authority and on-demand materialization.
+- **MCP:** a scoped, audited agent-facing wrapper over canonical capabilities.
+- **CLI:** an operator and automation surface over the same capabilities.
+- **Authorized delivery capabilities:** short-lived, bounded URLs or equivalent
+  capabilities for displaying, previewing, transforming, or downloading a
+  specific media resource; never long-lived infrastructure credentials.
+
+### Adapter rules and integration invariants
+
+An adapter translates an external model into the canonical Framebase model. It
+does not become a second business-logic implementation or an alternate source
+of truth. Every adapter must preserve the same validation, authorization,
+idempotency, revision/conflict handling, audit, trash, approval,
+undo/reversibility, and original-file protections as the Framebase application.
+
+The following invariants apply to all future integrations:
+
+1. **Framebase remains authoritative.** External systems receive projections or
+   references unless an explicitly designed synchronization contract states
+   otherwise.
+2. **Stable Framebase IDs cross boundaries.** Filenames and R2 keys are not
+   durable integration identity, and original storage keys remain implementation
+   details.
+3. **Infrastructure credentials never cross the boundary.** Adapters receive
+   bounded API capabilities, not direct R2, D1, or Cloudflare credentials.
+4. **Logical organization remains catalog based.** A logical rename or move
+   does not move immutable blob bytes.
+5. **Private by default remains in force.** Use thumbnails, previews, or other
+   bounded derivatives before originals when the consuming system does not need
+   original bytes; convenience never creates permanent public originals.
+6. **Synchronization ownership is explicit.** An adapter must not silently
+   create alternate truth for a field or entity, and audit attribution must
+   identify the originating surface (for example Mac UI, Finder, workflow, CLI,
+   MCP, HubSpot, or Shopify).
+7. **Adapters stay replaceable.** No platform becomes embedded in the core
+   Framebase domain without a genuine domain requirement. Platform API and
+   capability assumptions must be reverified immediately before that adapter's
+   implementation.
+
+### Bridge terminology and concrete adapter examples
+
+In Framebase, a **bridge** means a purpose-specific adapter between Framebase
+and an external interface or platform:
+
+- Finder File Provider: Finder and macOS applications ↔ Framebase.
+- HubSpot Media Bridge integration: HubSpot ↔ Framebase.
+- Shopify integration: Shopify ↔ Framebase.
+- Framebase MCP server: AI and agent clients ↔ Framebase capabilities.
+- Framebase CLI: command-line operators and automation ↔ Framebase
+  capabilities.
+
+Do not introduce a component named simply `MediaBridge`, or place a generic
+middle service between Framebase, its API, and every external system, unless a
+future architecture decision demonstrates a concrete need. That abstraction
+would currently duplicate a boundary already owned by the canonical domain/API.
+
+**Finder.** Finder remains the planned Apple File Provider integration from
+Phase 5, not a custom generic bridge. It does not receive raw R2 authority or
+manipulate R2 keys. Cloud-only assets materialize through Framebase's
+authenticated API; Finder rename, move, folder, import, and trash operations
+use the same catalog rules and synchronization/change model as the app. The
+File Provider is not an independent filesystem or database authority.
+
+**HubSpot.** “Media Bridge” is also the name of a specific HubSpot integration
+capability/API. That product name does not make Framebase a HubSpot-style Media
+Bridge. A future `Framebase HubSpot Connector` (or HubSpot adapter) may project
+a Framebase Asset into a HubSpot Media Bridge representation:
+
+```text
+Framebase Asset
+      |
+      | Framebase HubSpot adapter
+      v
+HubSpot Media Bridge representation
+```
+
+Framebase remains authoritative. A projection may eventually include a stable
+external asset ID, title/name, media type, authorized media and preview URLs,
+a details link, and HubSpot-required metadata, but no schema is decided here.
+The current official HubSpot Media Bridge API/documentation must be reverified
+immediately before implementation.
+
+**Shopify and other applications.** A future adapter may let a platform select,
+reference, deliver, or synchronize Framebase-managed assets without making that
+platform the original-media authority. It translates the platform-specific
+model to Framebase's canonical domain/API; no implementation package or schema
+is implied by this roadmap.
+
+**MCP and CLI.** These are capability adapters too, not privileged storage
+clients. They must not receive unrestricted database access, R2/private-storage
+credentials, or destructive purge access outside the normal authorization
+model. The existing dry-run, proposal, approval, and audit semantics continue
+to apply to sensitive and bulk mutations.
+
+### Change events and future integration sequencing
+
+The ordered `ChangeEvent` model and `/v1/changes` are the future foundation for
+integration synchronization. Adapters may eventually consume catalog changes
+such as asset updates, trash/restore, folder changes, metadata updates,
+derivative readiness, or workflow completion. Exact event names and webhook or
+subscription mechanics remain future work; any such mechanism must layer on
+the canonical change model rather than introduce a separate integration truth
+source or require adapters to poll the full catalog.
+
+No standalone “Media Bridge” phase is required. Future platform adapters depend
+on the canonical Framebase domain model, versioned API/auth/sync contract, and
+the relevant security foundation:
+
+```text
+Framebase domain model
+        -> versioned API / auth / sync contract
+        -> safe adapter foundation
+        -> HubSpot / Shopify / other platform adapters
+```
+
+This preserves Finder's existing File Provider phase and CLI/MCP's existing
+agent-platform phase. It also establishes these anti-goals: Framebase must not
+become a thin wrapper around HubSpot, make Shopify or Finder authoritative,
+expose R2 as the integration API, grant agents direct storage credentials,
+duplicate mutation logic in every connector, create permanent public URLs for
+convenience, or create speculative adapter packages before an approved phase
+requires them.
+
 ### Target repository evolution
 
 Add only what an active phase requires. The likely end state is:
@@ -734,4 +914,3 @@ Platform behavior and limits below were verified from primary documentation on 2
 - [Cloudflare AI Gateway fallbacks](https://developers.cloudflare.com/ai-gateway/configuration/fallbacks/)
 - [Cloudflare Workers observability](https://developers.cloudflare.com/workers/observability/)
 - [Apple replicated File Provider extension](https://developer.apple.com/documentation/fileprovider/nsfileproviderreplicatedextension)
-
