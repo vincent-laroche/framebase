@@ -1,21 +1,57 @@
 import { Hono } from 'hono';
+import { requireAuth } from '../middleware/auth.js';
 import type { AppEnv } from '../types.js';
 
 export const mutationsRouter = new Hono<AppEnv>();
+
+type MutationOperationType =
+  | 'create_folder'
+  | 'rename_folder'
+  | 'move_assets'
+  | 'update_rating'
+  | 'update_favorite';
 
 interface MutationRequest {
   clientMutationId: string;
   actorId: string;
   operations: Array<{
-    type: 'create_folder' | 'rename_folder' | 'move_assets' | 'update_rating' | 'update_favorite';
+    type: MutationOperationType;
     targetId: string;
     payload: Record<string, unknown>;
   }>;
 }
 
-mutationsRouter.post('/mutations', async (c) => {
+const REQUIRED_SCOPE_BY_OPERATION: Record<MutationOperationType, string> = {
+  create_folder: 'assets.organize',
+  rename_folder: 'assets.organize',
+  move_assets: 'assets.organize',
+  update_rating: 'assets.metadata.write',
+  update_favorite: 'assets.metadata.write'
+};
+
+mutationsRouter.post('/mutations', requireAuth(), async (c) => {
   const idempotencyKey = c.req.header('Idempotency-Key');
   const body = await c.req.json<MutationRequest>();
+
+  const grantedScopes = c.get('scopes') ?? [];
+  const missingScopes = new Set<string>();
+  for (const op of body.operations) {
+    const requiredScope = REQUIRED_SCOPE_BY_OPERATION[op.type];
+    if (!requiredScope || !grantedScopes.includes(requiredScope)) {
+      missingScopes.add(requiredScope ?? op.type);
+    }
+  }
+  if (missingScopes.size > 0) {
+    return c.json(
+      {
+        error: {
+          code: 'FORBIDDEN',
+          message: `Missing required scope(s): ${Array.from(missingScopes).join(', ')}`
+        }
+      },
+      403
+    );
+  }
 
   const mutationId = idempotencyKey || body.clientMutationId;
   if (!mutationId) {

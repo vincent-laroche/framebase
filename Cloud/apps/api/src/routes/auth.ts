@@ -1,7 +1,10 @@
 import { Hono } from 'hono';
+import { Jwt } from 'hono/utils/jwt';
 import type { AppEnv } from '../types.js';
 
 export const authRouter = new Hono<AppEnv>();
+
+const SESSION_LIFETIME_SECONDS = 3600;
 
 authRouter.post('/auth/enroll', async (c) => {
   const body = await c.req.json<{
@@ -15,6 +18,13 @@ authRouter.post('/auth/enroll', async (c) => {
     return c.json(
       { error: { code: 'INVALID_REQUEST', message: 'deviceId, deviceName, and publicKey are required' } },
       400
+    );
+  }
+
+  if (!c.env.JWT_SECRET) {
+    return c.json(
+      { error: { code: 'SERVER_MISCONFIGURED', message: 'JWT_SECRET is not configured' } },
+      500
     );
   }
 
@@ -43,14 +53,19 @@ authRouter.post('/auth/enroll', async (c) => {
     .bind(body.deviceId, body.deviceName, body.publicKey, scopesJson)
     .run();
 
-  // Return synthetic token for dev environment
-  const sessionToken = `dev_token_${body.deviceId}_${Date.now()}`;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const expiresAtSeconds = nowSeconds + SESSION_LIFETIME_SECONDS;
+  const sessionToken = await Jwt.sign(
+    { sub: body.deviceId, scopes: requestedScopes, iat: nowSeconds, exp: expiresAtSeconds },
+    c.env.JWT_SECRET,
+    'HS256'
+  );
 
   return c.json({
     status: 'enrolled',
     deviceId: body.deviceId,
     scopes: requestedScopes,
     token: sessionToken,
-    expiresAt: new Date(Date.now() + 3600 * 1000).toISOString()
+    expiresAt: new Date(expiresAtSeconds * 1000).toISOString()
   });
 });

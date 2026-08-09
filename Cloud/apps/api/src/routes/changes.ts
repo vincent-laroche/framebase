@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
+import { requireAuth } from '../middleware/auth.js';
 import type { AppEnv } from '../types.js';
 
 export const changesRouter = new Hono<AppEnv>();
 
-changesRouter.get('/changes', async (c) => {
+changesRouter.get('/changes', requireAuth('library.read'), async (c) => {
   const afterParam = c.req.query('after');
   const limitParam = c.req.query('limit');
 

@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
+import { requireAuth } from '../middleware/auth.js';
 import type { AppEnv } from '../types.js';
 
 export const blobsRouter = new Hono<AppEnv>();
 
-blobsRouter.post('/blobs/upload-initiate', async (c) => {
+blobsRouter.post('/blobs/upload-initiate', requireAuth('assets.import'), async (c) => {
   const body = await c.req.json<{
     sha256: string;
     byteSize: number;
@@ -38,7 +39,7 @@ blobsRouter.post('/blobs/upload-initiate', async (c) => {
   });
 });
 
-blobsRouter.put('/blobs/upload-direct', async (c) => {
+blobsRouter.put('/blobs/upload-direct', requireAuth('assets.import'), async (c) => {
   const key = c.req.query('key');
   if (!key) {
     return c.json({ error: { code: 'MISSING_KEY', message: 'key query param required' } }, 400);
@@ -50,7 +51,7 @@ blobsRouter.put('/blobs/upload-direct', async (c) => {
   return c.json({ status: 'uploaded', key, size: body.byteLength });
 });
 
-blobsRouter.post('/blobs/upload-complete', async (c) => {
+blobsRouter.post('/blobs/upload-complete', requireAuth('assets.import'), async (c) => {
   const body = await c.req.json<{
     sha256: string;
     byteSize: number;
@@ -84,7 +85,7 @@ blobsRouter.post('/blobs/upload-complete', async (c) => {
   });
 });
 
-blobsRouter.get('/blobs/:id/download', async (c) => {
+blobsRouter.get('/blobs/:id/download', requireAuth('originals.download'), async (c) => {
   const blobId = c.req.param('id');
   const blob = await c.env.DB.prepare('SELECT * FROM blobs WHERE id = ? OR sha256 = ?')
     .bind(blobId, blobId)
