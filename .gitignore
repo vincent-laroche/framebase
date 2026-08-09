@@ -8,6 +8,9 @@ DerivedData/
 dist/
 *.xcuserstate
 xcuserdata/
+node_modules/
+.wrangler/
+.dev.vars
 
 # Agent worktrees live inside .claude/ and carry their own build output.
 .claude/worktrees/
