@@ -15,6 +15,13 @@ struct SidebarAssetDrop: Equatable, Sendable {
 enum SidebarContextAction: Equatable, Sendable {
     case createFolder(parentFolderID: FolderID?)
     case deleteFolder(FolderID)
+    case createAlbum
+    case deleteAlbum(AlbumID)
+    case moveAlbum(AlbumID, earlier: Bool)
+    case createTag
+    case deleteTag(TagID)
+    case deleteSavedSearch(SavedSearchID)
+    case deleteSmartCollection(SmartCollectionID)
 }
 
 enum SidebarDropDisposition: Equatable, Sendable {
@@ -27,11 +34,18 @@ enum SidebarDropDisposition: Equatable, Sendable {
 struct FoundationSidebar: NSViewRepresentable {
     var folderTree: FolderTreeSnapshot?
     var albums: [Album]
+    var tags: [Tag]
+    var savedSearches: [SavedSearch]
+    var smartCollections: [SmartCollection]
     @Binding var selection: NavigationTarget?
     @Binding var expandedFolderIDs: Set<FolderID>
     @Binding var isKeyboardFocused: Bool
     var focusRequestGeneration: Int
     var onRenameFolder: (FolderID, String) -> Void
+    var onRenameAlbum: (AlbumID, String) -> Void
+    var onRenameTag: (TagID, String) -> Void
+    var onRenameSavedSearch: (SavedSearchID, String) -> Void
+    var onRenameSmartCollection: (SmartCollectionID, String) -> Void
     var onContextAction: (SidebarContextAction) -> Void
     var validateFolderDrop: (SidebarFolderDrop) -> SidebarDropDisposition
     var onReparentFolder: (SidebarFolderDrop) -> Void
@@ -41,11 +55,18 @@ struct FoundationSidebar: NSViewRepresentable {
     init(
         folderTree: FolderTreeSnapshot? = nil,
         albums: [Album] = [],
+        tags: [Tag] = [],
+        savedSearches: [SavedSearch] = [],
+        smartCollections: [SmartCollection] = [],
         selection: Binding<NavigationTarget?>,
         expandedFolderIDs: Binding<Set<FolderID>> = .constant([]),
         isKeyboardFocused: Binding<Bool> = .constant(false),
         focusRequestGeneration: Int = 0,
         onRenameFolder: @escaping (FolderID, String) -> Void = { _, _ in },
+        onRenameAlbum: @escaping (AlbumID, String) -> Void = { _, _ in },
+        onRenameTag: @escaping (TagID, String) -> Void = { _, _ in },
+        onRenameSavedSearch: @escaping (SavedSearchID, String) -> Void = { _, _ in },
+        onRenameSmartCollection: @escaping (SmartCollectionID, String) -> Void = { _, _ in },
         onContextAction: @escaping (SidebarContextAction) -> Void = { _ in },
         validateFolderDrop: @escaping (SidebarFolderDrop) -> SidebarDropDisposition = { _ in .rejected },
         onReparentFolder: @escaping (SidebarFolderDrop) -> Void = { _ in },
@@ -54,11 +75,18 @@ struct FoundationSidebar: NSViewRepresentable {
     ) {
         self.folderTree = folderTree
         self.albums = albums
+        self.tags = tags
+        self.savedSearches = savedSearches
+        self.smartCollections = smartCollections
         _selection = selection
         _expandedFolderIDs = expandedFolderIDs
         _isKeyboardFocused = isKeyboardFocused
         self.focusRequestGeneration = focusRequestGeneration
         self.onRenameFolder = onRenameFolder
+        self.onRenameAlbum = onRenameAlbum
+        self.onRenameTag = onRenameTag
+        self.onRenameSavedSearch = onRenameSavedSearch
+        self.onRenameSmartCollection = onRenameSmartCollection
         self.onContextAction = onContextAction
         self.validateFolderDrop = validateFolderDrop
         self.onReparentFolder = onReparentFolder
@@ -96,10 +124,10 @@ struct FoundationSidebar: NSViewRepresentable {
             coordinator?.reportFocus(isFocused)
         }
         outlineView.onRenameSelected = { [weak coordinator = context.coordinator] in
-            coordinator?.beginRenamingSelectedFolder()
+            coordinator?.beginRenamingSelectedItem()
         }
         outlineView.onDeleteSelected = { [weak coordinator = context.coordinator] in
-            coordinator?.deleteSelectedFolder()
+            coordinator?.deleteSelectedItem()
         }
 
         let scrollView = NSScrollView()
@@ -110,7 +138,7 @@ struct FoundationSidebar: NSViewRepresentable {
         scrollView.documentView = outlineView
 
         context.coordinator.attach(outlineView)
-        context.coordinator.applyContent(folderTree: folderTree, albums: albums)
+        context.coordinator.applyContent(folderTree: folderTree, albums: albums, tags: tags, savedSearches: savedSearches, smartCollections: smartCollections)
         context.coordinator.synchronizeFromSwiftUI()
         return scrollView
     }
@@ -120,7 +148,7 @@ struct FoundationSidebar: NSViewRepresentable {
 
         context.coordinator.parent = self
         context.coordinator.attach(outlineView)
-        context.coordinator.applyContent(folderTree: folderTree, albums: albums)
+        context.coordinator.applyContent(folderTree: folderTree, albums: albums, tags: tags, savedSearches: savedSearches, smartCollections: smartCollections)
         context.coordinator.synchronizeFromSwiftUI()
     }
 
@@ -156,12 +184,18 @@ struct FoundationSidebar: NSViewRepresentable {
             self.outlineView = outlineView
         }
 
-        func applyContent(folderTree: FolderTreeSnapshot?, albums: [Album]) {
-            let signature = SidebarContentSignature(folderTree: folderTree, albums: albums)
+        func applyContent(folderTree: FolderTreeSnapshot?, albums: [Album], tags: [Tag], savedSearches: [SavedSearch], smartCollections: [SmartCollection]) {
+            let signature = SidebarContentSignature(
+                folderTree: folderTree,
+                albums: albums,
+                tags: tags,
+                savedSearches: savedSearches,
+                smartCollections: smartCollections
+            )
             guard signature != contentSignature else { return }
 
             contentSignature = signature
-            rebuildNodes(folderTree: folderTree, albums: albums)
+            rebuildNodes(folderTree: folderTree, albums: albums, tags: tags, savedSearches: savedSearches, smartCollections: smartCollections)
             outlineView?.reloadData()
         }
 
@@ -201,10 +235,10 @@ struct FoundationSidebar: NSViewRepresentable {
             parent.isKeyboardFocused = isFocused
         }
 
-        func beginRenamingSelectedFolder() {
+        func beginRenamingSelectedItem() {
             guard let outlineView,
                   let node = selectedNode(in: outlineView),
-                  case .folder = node.id else { return }
+                  node.isEditable else { return }
 
             let row = outlineView.row(forItem: node)
             guard row >= 0 else { return }
@@ -212,11 +246,16 @@ struct FoundationSidebar: NSViewRepresentable {
             outlineView.editColumn(0, row: row, with: nil, select: true)
         }
 
-        func deleteSelectedFolder() {
-            guard let outlineView,
-                  let node = selectedNode(in: outlineView),
-                  case let .folder(folderID) = node.id else { return }
-            parent.onContextAction(.deleteFolder(folderID))
+        func deleteSelectedItem() {
+            guard let outlineView, let node = selectedNode(in: outlineView) else { return }
+            switch node.id {
+            case let .folder(folderID): parent.onContextAction(.deleteFolder(folderID))
+            case let .album(albumID): parent.onContextAction(.deleteAlbum(albumID))
+            case let .tag(tagID): parent.onContextAction(.deleteTag(tagID))
+            case let .savedSearch(savedSearchID): parent.onContextAction(.deleteSavedSearch(savedSearchID))
+            case let .smartCollection(smartCollectionID): parent.onContextAction(.deleteSmartCollection(smartCollectionID))
+            default: return
+            }
         }
 
         func numberOfChildren(of item: Any?) -> Int {
@@ -254,10 +293,7 @@ struct FoundationSidebar: NSViewRepresentable {
 
         func outlineView(_ outlineView: NSOutlineView, shouldEdit tableColumn: NSTableColumn?, item: Any) -> Bool {
             guard let node = item as? SidebarNode else { return false }
-            if case .folder = node.id {
-                return true
-            }
-            return false
+            return node.isEditable
         }
 
         func outlineView(
@@ -298,13 +334,18 @@ struct FoundationSidebar: NSViewRepresentable {
         func controlTextDidEndEditing(_ notification: Notification) {
             guard let textField = notification.object as? NSTextField,
                   let cell = textField.superview as? SidebarCellView,
-                  let node = cell.node,
-                  case let .folder(folderID) = node.id else { return }
+                  let node = cell.node else { return }
 
             let proposedName = textField.stringValue
             textField.stringValue = node.title
-            if proposedName != node.title {
-                parent.onRenameFolder(folderID, proposedName)
+            guard proposedName != node.title else { return }
+            switch node.id {
+            case let .folder(folderID): parent.onRenameFolder(folderID, proposedName)
+            case let .album(albumID): parent.onRenameAlbum(albumID, proposedName)
+            case let .tag(tagID): parent.onRenameTag(tagID, proposedName)
+            case let .savedSearch(savedSearchID): parent.onRenameSavedSearch(savedSearchID, proposedName)
+            case let .smartCollection(smartCollectionID): parent.onRenameSmartCollection(smartCollectionID, proposedName)
+            default: return
             }
         }
 
@@ -393,11 +434,30 @@ struct FoundationSidebar: NSViewRepresentable {
             switch contextMenuNode?.id {
             case .group(.folders), .placeholder(.folders):
                 menu.addItem(menuItem("New Folder", action: #selector(createRootFolder)))
+            case .group(.albums), .placeholder(.albums):
+                menu.addItem(menuItem("New Album", action: #selector(createAlbum)))
+            case .group(.tags), .placeholder(.tags):
+                menu.addItem(menuItem("New Tag", action: #selector(createTag)))
             case .folder:
                 menu.addItem(menuItem("New Subfolder", action: #selector(createSubfolder)))
                 menu.addItem(.separator())
-                menu.addItem(menuItem("Rename", action: #selector(renameFolder)))
-                menu.addItem(menuItem("Delete Folder", action: #selector(deleteFolder)))
+                menu.addItem(menuItem("Rename", action: #selector(renameSelectedItem)))
+                menu.addItem(menuItem("Delete Folder", action: #selector(deleteSelectedItemFromMenu)))
+            case .album:
+                menu.addItem(menuItem("Move Album Up", action: #selector(moveAlbumUp)))
+                menu.addItem(menuItem("Move Album Down", action: #selector(moveAlbumDown)))
+                menu.addItem(.separator())
+                menu.addItem(menuItem("Rename", action: #selector(renameSelectedItem)))
+                menu.addItem(menuItem("Delete Album", action: #selector(deleteSelectedItemFromMenu)))
+            case .tag:
+                menu.addItem(menuItem("Rename", action: #selector(renameSelectedItem)))
+                menu.addItem(menuItem("Delete Tag", action: #selector(deleteSelectedItemFromMenu)))
+            case .savedSearch:
+                menu.addItem(menuItem("Rename", action: #selector(renameSelectedItem)))
+                menu.addItem(menuItem("Delete Saved Search", action: #selector(deleteSelectedItemFromMenu)))
+            case .smartCollection:
+                menu.addItem(menuItem("Rename", action: #selector(renameSelectedItem)))
+                menu.addItem(menuItem("Delete Smart Collection", action: #selector(deleteSelectedItemFromMenu)))
             default:
                 break
             }
@@ -412,16 +472,33 @@ struct FoundationSidebar: NSViewRepresentable {
             parent.onContextAction(.createFolder(parentFolderID: folderID))
         }
 
-        @objc private func renameFolder() {
-            beginRenamingSelectedFolder()
+        @objc private func createAlbum() {
+            parent.onContextAction(.createAlbum)
         }
 
-        @objc private func deleteFolder() {
-            guard case let .folder(folderID) = contextMenuNode?.id else { return }
-            parent.onContextAction(.deleteFolder(folderID))
+        @objc private func moveAlbumUp() {
+            guard case let .album(albumID) = contextMenuNode?.id else { return }
+            parent.onContextAction(.moveAlbum(albumID, earlier: true))
         }
 
-        private func rebuildNodes(folderTree: FolderTreeSnapshot?, albums: [Album]) {
+        @objc private func moveAlbumDown() {
+            guard case let .album(albumID) = contextMenuNode?.id else { return }
+            parent.onContextAction(.moveAlbum(albumID, earlier: false))
+        }
+
+        @objc private func createTag() {
+            parent.onContextAction(.createTag)
+        }
+
+        @objc private func renameSelectedItem() {
+            beginRenamingSelectedItem()
+        }
+
+        @objc private func deleteSelectedItemFromMenu() {
+            deleteSelectedItem()
+        }
+
+        private func rebuildNodes(folderTree: FolderTreeSnapshot?, albums: [Album], tags: [Tag], savedSearches: [SavedSearch], smartCollections: [SmartCollection]) {
             nodesByID.removeAll(keepingCapacity: true)
             folderParentByID.removeAll(keepingCapacity: true)
 
@@ -429,7 +506,8 @@ struct FoundationSidebar: NSViewRepresentable {
             libraryGroup.children = [
                 destinationNode(.allAssets, title: "All Assets", symbolName: "photo.on.rectangle.angled"),
                 destinationNode(.inbox, title: "Inbox", symbolName: "tray"),
-                destinationNode(.favorites, title: "Favorites", symbolName: "heart")
+                destinationNode(.favorites, title: "Favorites", symbolName: "heart"),
+                destinationNode(.trash, title: "Trash", symbolName: "trash")
             ]
 
             let foldersGroup = SidebarNode(id: .group(.folders), title: "Folders", isGroup: true)
@@ -466,7 +544,71 @@ struct FoundationSidebar: NSViewRepresentable {
                 albumsGroup.children = [SidebarNode(id: .placeholder(.albums), title: "No albums yet")]
             }
 
-            rootNodes = [libraryGroup, foldersGroup, albumsGroup]
+            let tagsGroup = SidebarNode(id: .group(.tags), title: "Tags", isGroup: true)
+            tagsGroup.children = tags
+                .sorted {
+                    if $0.sortOrder != $1.sortOrder {
+                        return $0.sortOrder < $1.sortOrder
+                    }
+                    return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                }
+                .map { tag in
+                    SidebarNode(
+                        id: .tag(tag.id),
+                        title: tag.name,
+                        symbolName: "tag",
+                        navigationTarget: .tag(tag.id)
+                    )
+                }
+            if tagsGroup.children.isEmpty {
+                tagsGroup.children = [SidebarNode(id: .placeholder(.tags), title: "No tags yet")]
+            }
+
+            let savedSearchesGroup = SidebarNode(id: .group(.savedSearches), title: "Saved Searches", isGroup: true)
+            savedSearchesGroup.children = savedSearches
+                .sorted {
+                    if $0.sortOrder != $1.sortOrder {
+                        return $0.sortOrder < $1.sortOrder
+                    }
+                    return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                }
+                .map { savedSearch in
+                    SidebarNode(
+                        id: .savedSearch(savedSearch.id),
+                        title: savedSearch.name,
+                        symbolName: "bookmark",
+                        navigationTarget: .savedSearch(savedSearch.id)
+                    )
+                }
+            if savedSearchesGroup.children.isEmpty {
+                savedSearchesGroup.children = [
+                    SidebarNode(id: .placeholder(.savedSearches), title: "No saved searches yet")
+                ]
+            }
+
+            let smartCollectionsGroup = SidebarNode(id: .group(.smartCollections), title: "Smart Collections", isGroup: true)
+            smartCollectionsGroup.children = smartCollections
+                .sorted {
+                    if $0.sortOrder != $1.sortOrder {
+                        return $0.sortOrder < $1.sortOrder
+                    }
+                    return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                }
+                .map { smartCollection in
+                    SidebarNode(
+                        id: .smartCollection(smartCollection.id),
+                        title: smartCollection.name,
+                        symbolName: "sparkles",
+                        navigationTarget: .smartCollection(smartCollection.id)
+                    )
+                }
+            if smartCollectionsGroup.children.isEmpty {
+                smartCollectionsGroup.children = [
+                    SidebarNode(id: .placeholder(.smartCollections), title: "No smart collections yet")
+                ]
+            }
+
+            rootNodes = [libraryGroup, foldersGroup, albumsGroup, tagsGroup, savedSearchesGroup, smartCollectionsGroup]
             indexNodes(rootNodes)
         }
 
@@ -561,7 +703,10 @@ struct FoundationSidebar: NSViewRepresentable {
             switch target {
             case let .folder(folderID): nodesByID[.folder(folderID)]
             case let .album(albumID): nodesByID[.album(albumID)]
-            case .allAssets, .inbox, .favorites: nodesByID[.destination(target)]
+            case let .tag(tagID): nodesByID[.tag(tagID)]
+            case let .savedSearch(savedSearchID): nodesByID[.savedSearch(savedSearchID)]
+            case let .smartCollection(smartCollectionID): nodesByID[.smartCollection(smartCollectionID)]
+            case .allAssets, .inbox, .favorites, .trash: nodesByID[.destination(target)]
             }
         }
 
@@ -798,11 +943,17 @@ private enum SidebarGroup: CaseIterable, Hashable {
     case library
     case folders
     case albums
+    case tags
+    case savedSearches
+    case smartCollections
 }
 
 private enum SidebarPlaceholder: Hashable {
     case folders
     case albums
+    case tags
+    case savedSearches
+    case smartCollections
 }
 
 private enum SidebarNodeID: Hashable {
@@ -810,6 +961,9 @@ private enum SidebarNodeID: Hashable {
     case destination(NavigationTarget)
     case folder(FolderID)
     case album(AlbumID)
+    case tag(TagID)
+    case savedSearch(SavedSearchID)
+    case smartCollection(SmartCollectionID)
     case placeholder(SidebarPlaceholder)
 }
 
@@ -840,7 +994,10 @@ private final class SidebarNode: NSObject {
     }
 
     var isEditable: Bool {
-        if case .folder = id { true } else { false }
+        switch id {
+        case .folder, .album, .tag, .savedSearch, .smartCollection: true
+        default: false
+        }
     }
 }
 
@@ -859,12 +1016,35 @@ private struct SidebarContentSignature: Equatable {
         let sortOrder: Int64
     }
 
+    private struct TagValue: Equatable {
+        let id: TagID
+        let name: String
+        let sortOrder: Int64
+    }
+
+    private struct SavedSearchValue: Equatable {
+        let id: SavedSearchID
+        let name: String
+        let sortOrder: Int64
+        let updatedAt: Date
+    }
+
+    private struct SmartCollectionValue: Equatable {
+        let id: SmartCollectionID
+        let name: String
+        let sortOrder: Int64
+        let updatedAt: Date
+    }
+
     private let folders: [FolderValue]
     private let roots: [FolderID]
     private let children: [FolderID: [FolderID]]
     private let albums: [AlbumValue]
+    private let tags: [TagValue]
+    private let savedSearches: [SavedSearchValue]
+    private let smartCollections: [SmartCollectionValue]
 
-    init(folderTree: FolderTreeSnapshot?, albums: [Album]) {
+    init(folderTree: FolderTreeSnapshot?, albums: [Album], tags: [Tag], savedSearches: [SavedSearch], smartCollections: [SmartCollection]) {
         folders = folderTree?.folders.map {
             FolderValue(
                 id: $0.id,
@@ -877,6 +1057,13 @@ private struct SidebarContentSignature: Equatable {
         roots = folderTree?.roots ?? []
         children = folderTree?.childrenByParent ?? [:]
         self.albums = albums.map { AlbumValue(id: $0.id, name: $0.name, sortOrder: $0.sortOrder) }
+        self.tags = tags.map { TagValue(id: $0.id, name: $0.name, sortOrder: $0.sortOrder) }
+        self.savedSearches = savedSearches.map {
+            SavedSearchValue(id: $0.id, name: $0.name, sortOrder: $0.sortOrder, updatedAt: $0.updatedAt)
+        }
+        self.smartCollections = smartCollections.map {
+            SmartCollectionValue(id: $0.id, name: $0.name, sortOrder: $0.sortOrder, updatedAt: $0.updatedAt)
+        }
     }
 }
 

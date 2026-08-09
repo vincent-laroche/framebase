@@ -233,6 +233,56 @@ public struct BlobDownload: Equatable, Sendable {
     public let etag: String?
 }
 
+// MARK: - Asset registration
+
+public struct AssetRegistrationRequest: Codable, Equatable, Sendable {
+    public let clientMutationId: String
+    public let assetId: String
+    public let blobId: String
+    public let folderId: String
+    public let filename: String
+    public let displayName: String
+    public let width: Int?
+    public let height: Int?
+    public let createdAt: String
+    public let modifiedAt: String
+    public let importedAt: String
+    public let favorite: Bool
+    public let rating: Int
+    public let metadata: JSONValue
+
+    public init(clientMutationId: String, assetId: String, blobId: String, folderId: String, filename: String, displayName: String, width: Int?, height: Int?, createdAt: String, modifiedAt: String, importedAt: String, favorite: Bool, rating: Int, metadata: JSONValue) {
+        self.clientMutationId = clientMutationId
+        self.assetId = assetId
+        self.blobId = blobId
+        self.folderId = folderId
+        self.filename = filename
+        self.displayName = displayName
+        self.width = width
+        self.height = height
+        self.createdAt = createdAt
+        self.modifiedAt = modifiedAt
+        self.importedAt = importedAt
+        self.favorite = favorite
+        self.rating = rating
+        self.metadata = metadata
+    }
+}
+
+public struct AssetRegistrationResponse: Codable, Equatable, Sendable {
+    public let status: String
+    public let assetId: String
+    public let blobId: String
+    public let revision: Int
+
+    public init(status: String, assetId: String, blobId: String, revision: Int) {
+        self.status = status
+        self.assetId = assetId
+        self.blobId = blobId
+        self.revision = revision
+    }
+}
+
 // MARK: - Mutations
 
 public enum MutationOperationType: String, Codable, Equatable, Sendable {

@@ -3,8 +3,14 @@ import FramebaseDomain
 import GRDB
 
 public enum FramebaseCatalogFoundation {
-    public static let initialSchemaVersion = 1
+    public static let initialSchemaVersion = 7
     public static let migrationIdentifier = "v1_initial_catalog"
+    public static let blobMigrationIdentifier = "v2_blob_asset_separation"
+    public static let tagMigrationIdentifier = "v3_tags"
+    public static let searchMigrationIdentifier = "v4_structured_search"
+    public static let savedSearchMigrationIdentifier = "v5_saved_searches"
+    public static let trashMigrationIdentifier = "v6_local_trash"
+    public static let smartCollectionMigrationIdentifier = "v7_smart_collections"
 
     public static func configure(_ configuration: inout Configuration) {
         configuration.foreignKeysEnabled = true
@@ -22,6 +28,13 @@ public enum CatalogError: Error, Equatable, Sendable {
     case invalidAssetDisplayName
     case folderNotFound(FolderID)
     case albumNotFound(AlbumID)
+    case invalidAlbumOrder
+    case tagNotFound(TagID)
+    case savedSearchNotFound(SavedSearchID)
+    case smartCollectionNotFound(SmartCollectionID)
+    case assetNotFound(AssetID)
+    case assetAlreadyTrashed(AssetID)
+    case invalidTrashRetentionDays(Int)
     case systemFolderImmutable(FolderID)
     case invalidFolderParent(FolderID)
     case folderCycle
@@ -40,6 +53,10 @@ public final class CatalogDatabase: Sendable {
     public let assets: CatalogAssetRepository
     public let folders: CatalogFolderRepository
     public let albums: CatalogAlbumRepository
+    public let blobs: CatalogBlobRepository
+    public let tags: CatalogTagRepository
+    public let savedSearches: CatalogSavedSearchRepository
+    public let smartCollections: CatalogSmartCollectionRepository
 
     let databasePool: DatabasePool
 
@@ -76,6 +93,10 @@ public final class CatalogDatabase: Sendable {
         self.assets = CatalogAssetRepository(databasePool: pool)
         self.folders = CatalogFolderRepository(databasePool: pool, inboxID: identity.1)
         self.albums = CatalogAlbumRepository(databasePool: pool)
+        self.blobs = CatalogBlobRepository(databasePool: pool)
+        self.tags = CatalogTagRepository(databasePool: pool)
+        self.savedSearches = CatalogSavedSearchRepository(databasePool: pool)
+        self.smartCollections = CatalogSmartCollectionRepository(databasePool: pool)
     }
 
     /// Inserts an already committed managed original into the catalog.
@@ -101,24 +122,7 @@ public final class CatalogDatabase: Sendable {
     /// remains outside the phase-one UI, but persistence exists from migration 1.
     @discardableResult
     public func createAlbum(named name: String, at date: Date = Date()) async throws -> Album {
-        let normalizedName = try CatalogValidation.normalizedName(name)
-        return try await databasePool.write { db in
-            let sortOrder = try CatalogSortOrder.next(
-                in: db,
-                table: "albums",
-                predicateSQL: "1",
-                arguments: []
-            )
-            let album = Album(
-                id: AlbumID(),
-                name: normalizedName,
-                createdAt: date,
-                updatedAt: date,
-                sortOrder: sortOrder
-            )
-            try AlbumRecord(album: album).insert(db)
-            return album
-        }
+        try await albums.createAlbum(named: name, at: date)
     }
 
     public func setOriginalAvailable(_ available: Bool, for assetID: AssetID) async throws {
@@ -153,6 +157,24 @@ public final class CatalogDatabase: Sendable {
                     """,
                 arguments: [catalogID, now, now]
             )
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.blobMigrationIdentifier) { db in
+            try db.execute(sql: Self.blobSchemaSQL)
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.tagMigrationIdentifier) { db in
+            try db.execute(sql: Self.tagSchemaSQL)
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.searchMigrationIdentifier) { db in
+            try db.execute(sql: Self.searchSchemaSQL)
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.savedSearchMigrationIdentifier) { db in
+            try db.execute(sql: Self.savedSearchSchemaSQL)
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.trashMigrationIdentifier) { db in
+            try db.execute(sql: Self.trashSchemaSQL)
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.smartCollectionMigrationIdentifier) { db in
+            try db.execute(sql: Self.smartCollectionSchemaSQL)
         }
         return migrator
     }
@@ -255,6 +277,112 @@ public final class CatalogDatabase: Sendable {
             value TEXT NOT NULL,
             updated_at_ms INTEGER NOT NULL
         );
+        """
+
+    private static let blobSchemaSQL = """
+        CREATE TABLE blobs (
+            id TEXT PRIMARY KEY NOT NULL,
+            sha256 TEXT NOT NULL UNIQUE
+                CHECK(length(sha256) = 64 AND sha256 = lower(sha256) AND sha256 GLOB '[0-9a-f]*'),
+            byte_size INTEGER NOT NULL CHECK(byte_size > 0),
+            media_type TEXT NOT NULL,
+            original_extension TEXT NOT NULL,
+            r2_key TEXT NOT NULL UNIQUE,
+            upload_state TEXT NOT NULL CHECK(upload_state IN ('pending', 'uploaded', 'verified', 'failed')),
+            verification_etag TEXT,
+            verified_at_ms INTEGER,
+            created_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX blobs_upload_state_index ON blobs(upload_state, created_at_ms);
+
+        CREATE TABLE asset_blobs (
+            asset_id TEXT PRIMARY KEY NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
+            blob_id TEXT NOT NULL REFERENCES blobs(id) ON DELETE RESTRICT,
+            linked_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX asset_blobs_blob_index ON asset_blobs(blob_id, asset_id);
+        """
+
+    private static let tagSchemaSQL = """
+        CREATE TABLE tags (
+            id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+            name TEXT NOT NULL COLLATE NOCASE CHECK(name = trim(name) AND length(name) BETWEEN 1 AND 255),
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX tags_name_unique ON tags(name COLLATE NOCASE);
+        CREATE TABLE asset_tags (
+            asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
+            tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT,
+            added_at_ms INTEGER NOT NULL,
+            PRIMARY KEY (asset_id, tag_id)
+        );
+        CREATE INDEX asset_tags_tag_index ON asset_tags(tag_id, asset_id);
+        """
+
+    private static let searchSchemaSQL = """
+        CREATE VIRTUAL TABLE asset_search USING fts5(
+            asset_id UNINDEXED,
+            display_name,
+            filename,
+            metadata_text,
+            tokenize = 'unicode61 remove_diacritics 2'
+        );
+        INSERT INTO asset_search (asset_id, display_name, filename, metadata_text)
+            SELECT id, display_name, filename, metadata_json FROM assets;
+
+        CREATE TRIGGER assets_search_insert AFTER INSERT ON assets BEGIN
+            INSERT INTO asset_search (asset_id, display_name, filename, metadata_text)
+            VALUES (new.id, new.display_name, new.filename, new.metadata_json);
+        END;
+        CREATE TRIGGER assets_search_delete AFTER DELETE ON assets BEGIN
+            DELETE FROM asset_search WHERE asset_id = old.id;
+        END;
+        CREATE TRIGGER assets_search_update AFTER UPDATE OF display_name, filename, metadata_json ON assets BEGIN
+            DELETE FROM asset_search WHERE asset_id = old.id;
+            INSERT INTO asset_search (asset_id, display_name, filename, metadata_text)
+            VALUES (new.id, new.display_name, new.filename, new.metadata_json);
+        END;
+
+        CREATE INDEX assets_exif_captured_at_index
+            ON assets(CAST(json_extract(metadata_json, '$.exif.capturedAt') AS REAL));
+        """
+
+    private static let savedSearchSchemaSQL = """
+        CREATE TABLE saved_searches (
+            id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+            name TEXT NOT NULL COLLATE NOCASE CHECK(name = trim(name) AND length(name) BETWEEN 1 AND 255),
+            query_json TEXT NOT NULL CHECK(json_valid(query_json)),
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX saved_searches_name_unique ON saved_searches(name COLLATE NOCASE);
+        CREATE INDEX saved_searches_sort_index ON saved_searches(sort_order, name COLLATE NOCASE, id);
+        """
+
+    private static let trashSchemaSQL = """
+        CREATE TABLE asset_trash (
+            asset_id TEXT PRIMARY KEY NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+            prior_folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE RESTRICT,
+            trashed_at_ms INTEGER NOT NULL,
+            expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms >= trashed_at_ms)
+        );
+        CREATE INDEX asset_trash_expiry_index ON asset_trash(expires_at_ms, asset_id);
+        """
+
+    private static let smartCollectionSchemaSQL = """
+        CREATE TABLE smart_collections (
+            id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+            name TEXT NOT NULL COLLATE NOCASE CHECK(name = trim(name) AND length(name) BETWEEN 1 AND 255),
+            query_json TEXT NOT NULL CHECK(json_valid(query_json)),
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX smart_collections_name_unique ON smart_collections(name COLLATE NOCASE);
+        CREATE INDEX smart_collections_sort_index ON smart_collections(sort_order, name COLLATE NOCASE, id);
         """
 }
 

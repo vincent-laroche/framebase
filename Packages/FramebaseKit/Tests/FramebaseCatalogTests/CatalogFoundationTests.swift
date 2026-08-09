@@ -10,6 +10,6 @@ struct CatalogFoundationTests {
         FramebaseCatalogFoundation.configure(&configuration)
 
         #expect(configuration.foreignKeysEnabled)
-        #expect(FramebaseCatalogFoundation.initialSchemaVersion == 1)
+        #expect(FramebaseCatalogFoundation.initialSchemaVersion == 7)
     }
 }

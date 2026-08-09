@@ -56,6 +56,10 @@ final class AppContainer {
     @ObservationIgnored private(set) var assetRepository: (any AssetRepository)?
     @ObservationIgnored private(set) var folderRepository: (any FolderRepository)?
     @ObservationIgnored private(set) var albumRepository: (any AlbumRepository)?
+    @ObservationIgnored private(set) var tagRepository: (any TagRepository)?
+    @ObservationIgnored private(set) var savedSearchRepository: (any SavedSearchRepository)?
+    @ObservationIgnored private(set) var smartCollectionRepository: (any SmartCollectionRepository)?
+    @ObservationIgnored private(set) var blobRepository: (any BlobRepository)?
     @ObservationIgnored private(set) var assetBlobStore: (any AssetBlobStore)?
     @ObservationIgnored private(set) var importCoordinator: (any ImportCoordinator)?
     @ObservationIgnored private(set) var thumbnailProvider: (any ThumbnailProvider)?
@@ -66,11 +70,10 @@ final class AppContainer {
 
     private static let libraryRootPreferenceKey = "framebase.libraryRootPath"
 
-    /// Defaults to false and nothing shipped in this app writes it yet —
-    /// deliberately. Real catalog sync (`FramebaseCatalogSync`) is built and
-    /// proven against fixtures, but turning it on for a real library is a
-    /// separate, explicit decision, not a side effect of enrolling a device
-    /// to test the Cloud (Dev) Settings tab.
+    /// Defaults to false. Set from the "Cloud (Dev)" Settings tab — a
+    /// deliberate, separate toggle from device enrollment, so enrolling to
+    /// test the tab doesn't by itself start syncing whatever library is
+    /// open.
     private static let cloudSyncEnabledPreferenceKey = "framebase.cloudSyncEnabled"
 
     init(preferences: UserDefaults = .standard) {
@@ -152,12 +155,11 @@ final class AppContainer {
 
     // MARK: - Cloud (dev) device enrollment
     //
-    // Independent of library state by design. Enrolling only registers this
-    // Mac against `framebase-api-dev` and stores a session JWT in Keychain —
-    // it never touches catalog data, and nothing here starts a `SyncEngine`
-    // against the real library. Real catalog sync is out of scope until
-    // Phase 2's "fixture assets only, no personal photos" boundary is
-    // explicitly lifted.
+    // Independent of library state by design: enrolling registers this Mac
+    // against `framebase-api-dev` and stores a session JWT in Keychain, and
+    // that's meaningful whether or not a library is open. Whether it also
+    // starts syncing the open library depends on the separate
+    // `cloudSyncEnabled` preference — see `activateCatalogSync`.
 
     func refreshEnrollmentStatus() async {
         guard let credential = try? await cloudCredentialStore.currentCredential() else {
@@ -188,11 +190,13 @@ final class AppContainer {
             expiresAt: expiresAt
         ))
         await refreshEnrollmentStatus()
+        await refreshCatalogSyncActivation()
     }
 
     func forgetDevice() async throws {
         try await cloudCredentialStore.clear()
         await refreshEnrollmentStatus()
+        await refreshCatalogSyncActivation()
     }
 
     func checkCloudHealth() async throws -> HealthResponse {
@@ -223,9 +227,6 @@ final class AppContainer {
     }
 
     private func activateLibrary(_ layout: LibraryPackageLayout, persistSelection: Bool = true) async throws {
-        await librarySyncCoordinator?.stop()
-        librarySyncCoordinator = nil
-
         let catalog = try CatalogDatabase(catalogURL: layout.catalogDatabaseURL)
         let blobStore = try ManagedAssetBlobStore(
             originalsDirectoryURL: layout.originalsDirectoryURL,
@@ -238,6 +239,10 @@ final class AppContainer {
 
         catalogDatabase = catalog
         albumRepository = catalog.albums
+        tagRepository = catalog.tags
+        savedSearchRepository = catalog.savedSearches
+        smartCollectionRepository = catalog.smartCollections
+        blobRepository = catalog.blobs
         assetBlobStore = blobStore
         importCoordinator = ManagedImportCoordinator(
             blobStore: blobStore,
@@ -261,10 +266,28 @@ final class AppContainer {
     }
 
     /// Wires real catalog sync only when both are true: `cloudSyncEnabled`
-    /// (nothing shipped sets it yet) and a live, unexpired device
-    /// enrollment. Otherwise `assetRepository`/`folderRepository` stay the
-    /// plain, non-syncing repositories exactly as before this existed.
+    /// and a live, unexpired device enrollment. Otherwise
+    /// `assetRepository`/`folderRepository` stay the plain, non-syncing
+    /// repositories exactly as before this existed. Self-contained: always
+    /// stops any previously running coordinator first, so it's safe to call
+    /// standalone — from `activateLibrary` on library open, or from
+    /// `refreshCatalogSyncActivation()` right after enrollment or a
+    /// Settings toggle changes, without needing a relaunch.
     private func activateCatalogSync(for catalog: CatalogDatabase, layout: LibraryPackageLayout) async throws {
+        await librarySyncCoordinator?.stop()
+        librarySyncCoordinator = nil
+
+#if DEBUG
+        // Native UI tests create a disposable library through this launch
+        // variable. They must never inherit the real app's Cloud Sync setting
+        // or touch a real device credential in Keychain.
+        if ProcessInfo.processInfo.environment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] != nil {
+            assetRepository = catalog.assets
+            folderRepository = catalog.folders
+            return
+        }
+#endif
+
         guard preferences.bool(forKey: Self.cloudSyncEnabledPreferenceKey),
               let credential = try? await cloudCredentialStore.currentCredential(),
               !credential.isExpired() else {
@@ -273,8 +296,16 @@ final class AppContainer {
             return
         }
 
+        // A sync.sqlite that doesn't exist yet means sync has never run for
+        // this library before, so its existing folders need a one-time
+        // backfill; a library that's had sync on before already has them.
+        let isFirstActivation = !FileManager.default.fileExists(atPath: layout.syncDatabaseURL.path)
         let syncState = try SyncStateStore(databaseURL: layout.syncDatabaseURL)
         let recorder = CatalogOutboxRecorder(outbox: syncState, actorID: credential.deviceId)
+
+        if isFirstActivation {
+            try await CatalogFolderBackfill.enqueueExistingFolders(from: catalog.folders, into: recorder)
+        }
 
         assetRepository = SyncingAssetRepository(wrapping: catalog.assets, recorder: recorder)
         folderRepository = SyncingFolderRepository(wrapping: catalog.folders, recorder: recorder)
@@ -292,6 +323,17 @@ final class AppContainer {
         let coordinator = LibrarySyncCoordinator(engine: engine)
         await coordinator.start()
         librarySyncCoordinator = coordinator
+    }
+
+    /// Re-evaluates the sync gate against the currently open library, if
+    /// any. Called after enrollment changes and after the Settings sync
+    /// toggle changes, so either taking effect doesn't require reopening
+    /// the library or relaunching the app.
+    func refreshCatalogSyncActivation() async {
+        guard let catalog = catalogDatabase, let rootURL = libraryRootURL else {
+            return
+        }
+        try? await activateCatalogSync(for: catalog, layout: LibraryPackageLayout(rootURL: rootURL))
     }
 
     private static func thumbnailCacheDirectoryURL() throws -> URL {

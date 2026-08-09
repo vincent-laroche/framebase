@@ -14,6 +14,7 @@ struct FramebaseSettingsView: View {
     @State private var isEnrolling = false
     @State private var isCheckingHealth = false
     @State private var healthResult: String?
+    @AppStorage("framebase.cloudSyncEnabled") private var cloudSyncEnabled = false
 
     var body: some View {
         TabView {
@@ -150,11 +151,32 @@ struct FramebaseSettingsView: View {
                     }
                 }
 
+                Section("Library Sync") {
+                    Toggle("Sync this library's folders and ratings to the cloud", isOn: $cloudSyncEnabled)
+                        .disabled(!isEnrolled)
+                        .onChange(of: cloudSyncEnabled) {
+                            Task { await container.refreshCatalogSyncActivation() }
+                        }
+
+                    if let rootURL = container.libraryRootURL {
+                        Text("Applies to the open library: \(rootURL.lastPathComponent)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(
+                        "When on and this Mac is enrolled, folder names, ratings, and favorites for the " +
+                        "open library sync to framebase-api-dev. Original photo files are never uploaded, " +
+                        "on or off."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
                 Section {
                     Text(
-                        "This is a Phase 2 development surface for framebase-api-dev. Personal photo " +
-                        "sync is not implemented — enrolling a device does not upload, sync, or share " +
-                        "any library content."
+                        "This is a Phase 2 development surface for framebase-api-dev. Enrolling alone " +
+                        "never syncs anything — Library Sync above is a separate switch, off by default."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)

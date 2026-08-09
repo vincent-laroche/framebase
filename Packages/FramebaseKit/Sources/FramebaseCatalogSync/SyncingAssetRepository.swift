@@ -62,4 +62,35 @@ public struct SyncingAssetRepository: AssetRepository {
         try await wrapped.moveAssets(assetIDs, to: folderID)
         try await recorder.recordAssetsMoved(assetIDs, to: folderID)
     }
+
+    public func moveAssetsWithReceipt(_ assetIDs: Set<AssetID>, to folderID: FolderID) async throws -> AssetMoveReceipt {
+        let receipt = try await wrapped.moveAssetsWithReceipt(assetIDs, to: folderID)
+        try await recorder.recordAssetsMoved(assetIDs, to: folderID)
+        return receipt
+    }
+
+    public func restoreAssetLocations(using receipt: AssetMoveReceipt) async throws -> AssetMoveReceipt {
+        let inverse = try await wrapped.restoreAssetLocations(using: receipt)
+        for folderID in Set(receipt.priorFolderByAssetID.values) {
+            let assetIDs = Set(receipt.priorFolderByAssetID.compactMap { $0.value == folderID ? $0.key : nil })
+            try await recorder.recordAssetsMoved(assetIDs, to: folderID)
+        }
+        return inverse
+    }
+
+    public func moveToTrash(_ assetIDs: Set<AssetID>, retentionDays: Int) async throws -> TrashReceipt {
+        try await wrapped.moveToTrash(assetIDs, retentionDays: retentionDays)
+    }
+
+    public func trashEntries(assetIDs: Set<AssetID>) async throws -> [TrashEntry] {
+        try await wrapped.trashEntries(assetIDs: assetIDs)
+    }
+
+    public func restoreFromTrash(_ assetIDs: Set<AssetID>) async throws -> TrashReceipt {
+        try await wrapped.restoreFromTrash(assetIDs)
+    }
+
+    public func restoreFromTrash(using receipt: TrashReceipt) async throws {
+        try await wrapped.restoreFromTrash(using: receipt)
+    }
 }

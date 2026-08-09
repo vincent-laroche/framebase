@@ -7,6 +7,9 @@ struct LibraryWindowView: View {
     @SceneStorage("library.inspectorVisible") private var storedInspectorVisible = true
     @SceneStorage("library.expandedFoldersByCatalog") private var storedExpandedFoldersByCatalog = ""
     @AppStorage("browser.thumbnailSize") private var storedThumbnailSize = 176.0
+    @AppStorage("browser.presentation") private var storedBrowserPresentation = AssetBrowserPresentation.grid.rawValue
+    @State private var isSearchFilterPopoverPresented = false
+    @State private var isDuplicateReviewPresented = false
 
     init(container: AppContainer) {
         _model = State(initialValue: LibraryWindowModel(container: container))
@@ -17,6 +20,9 @@ struct LibraryWindowView: View {
             FoundationSidebar(
                 folderTree: model.folderTreeSnapshot,
                 albums: model.albums,
+                tags: model.tags,
+                savedSearches: model.savedSearches,
+                smartCollections: model.smartCollections,
                 selection: navigationBinding,
                 expandedFolderIDs: expandedFolderIDsBinding,
                 isKeyboardFocused: sidebarKeyboardFocusBinding,
@@ -24,6 +30,26 @@ struct LibraryWindowView: View {
                 onRenameFolder: { folderID, proposedName in
                     Task {
                         await model.renameFolder(folderID, to: proposedName)
+                    }
+                },
+                onRenameAlbum: { albumID, proposedName in
+                    Task {
+                        await model.renameAlbum(albumID, to: proposedName)
+                    }
+                },
+                onRenameTag: { tagID, proposedName in
+                    Task {
+                        await model.renameTag(tagID, to: proposedName)
+                    }
+                },
+                onRenameSavedSearch: { savedSearchID, proposedName in
+                    Task {
+                        await model.renameSavedSearch(savedSearchID, to: proposedName)
+                    }
+                },
+                onRenameSmartCollection: { smartCollectionID, proposedName in
+                    Task {
+                        await model.renameSmartCollection(smartCollectionID, to: proposedName)
                     }
                 },
                 onContextAction: handleSidebarContextAction,
@@ -72,6 +98,61 @@ struct LibraryWindowView: View {
                 }
                 .disabled(!model.container.canBrowseLibrary)
 
+                Button(role: .destructive) {
+                    Task { await model.moveSelectedAssetsToTrash() }
+                } label: {
+                    Label("Move to Trash", systemImage: "trash")
+                }
+                .disabled(model.selectedAssetIDs.isEmpty || model.navigationTarget == .trash)
+                .accessibilityIdentifier("toolbar.moveToTrash")
+
+                Button {
+                    guard let destinationURL = LibraryPanelService.chooseExportDirectory() else { return }
+                    Task { await model.exportSelectedAssets(to: destinationURL) }
+                } label: {
+                    Label("Export Originals", systemImage: "square.and.arrow.up")
+                }
+                .disabled(model.selectedAssetIDs.isEmpty)
+
+                Menu {
+                    ForEach(model.moveDestinationFolders) { folder in
+                        Button(folder.name.rawValue) {
+                            Task { await model.moveAssets(model.selectedAssetIDs, to: folder.id) }
+                        }
+                        .disabled(!model.canMoveAssets(model.selectedAssetIDs, to: folder.id))
+                    }
+                } label: {
+                    Label("Move To", systemImage: "folder.badge.arrow.forward")
+                }
+                .disabled(model.selectedAssetIDs.isEmpty || model.moveDestinationFolders.isEmpty)
+
+                Button {
+                    model.revealSelectedOriginals()
+                } label: {
+                    Label("Reveal Originals", systemImage: "folder")
+                }
+                .disabled(model.selectedAssetIDs.isEmpty)
+
+                Button {
+                    isDuplicateReviewPresented = true
+                    Task { await model.refreshDuplicateCandidates() }
+                } label: {
+                    Label("Review Duplicates", systemImage: "rectangle.on.rectangle")
+                }
+                .popover(isPresented: $isDuplicateReviewPresented) {
+                    DuplicateCandidatesPopover(candidates: model.duplicateCandidates)
+                }
+
+                if model.navigationTarget == .trash {
+                    Button {
+                        Task { await model.restoreSelectedAssetsFromTrash() }
+                    } label: {
+                        Label("Restore", systemImage: "arrow.uturn.backward")
+                    }
+                    .disabled(model.selectedAssetIDs.isEmpty)
+                    .accessibilityIdentifier("toolbar.restoreFromTrash")
+                }
+
                 Menu {
                     ForEach(AssetSort.Key.allCases, id: \.self) { key in
                         Button(sortLabel(for: key)) {
@@ -88,6 +169,73 @@ struct LibraryWindowView: View {
                 } label: {
                     Label("Sort", systemImage: "arrow.up.arrow.down")
                 }
+
+                Menu {
+                    Button("Save Current Search") {
+                        Task { await model.saveCurrentSearch() }
+                    }
+
+                    if !model.savedSearches.isEmpty {
+                        Divider()
+                        ForEach(model.savedSearches) { savedSearch in
+                            Menu(savedSearch.name) {
+                                Button("Apply") { model.applySavedSearch(savedSearch) }
+                                Button("Delete", role: .destructive) {
+                                    Task { await model.deleteSavedSearch(savedSearch.id) }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Saved Searches", systemImage: "bookmark")
+                }
+                .accessibilityIdentifier("toolbar.savedSearches")
+
+                Menu {
+                    Button("Create From Current Rules") {
+                        Task { await model.createSmartCollectionFromCurrentQuery() }
+                    }
+
+                    if !model.smartCollections.isEmpty {
+                        Divider()
+                        ForEach(model.smartCollections) { smartCollection in
+                            Menu(smartCollection.name) {
+                                Button("Apply") { model.applySmartCollection(smartCollection) }
+                                Button("Delete", role: .destructive) {
+                                    Task { await model.deleteSmartCollection(smartCollection.id) }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Smart Collections", systemImage: "sparkles")
+                }
+                .accessibilityIdentifier("toolbar.smartCollections")
+
+                Button {
+                    isSearchFilterPopoverPresented.toggle()
+                } label: {
+                    Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
+                }
+                .accessibilityIdentifier("toolbar.searchFilters")
+                .popover(isPresented: $isSearchFilterPopoverPresented) {
+                    SearchFiltersPopover(
+                        criteria: model.assetQuery.criteria,
+                        tags: model.tags,
+                        albums: model.albums,
+                        onChange: model.updateSearchCriteria
+                    )
+                }
+
+                Picker("View", selection: browserPresentationBinding) {
+                    ForEach(AssetBrowserPresentation.allCases) { presentation in
+                        Label(presentation.title, systemImage: presentation.systemImage)
+                            .tag(presentation)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 104)
+                .accessibilityIdentifier("assetBrowser.presentation")
 
                 Slider(value: thumbnailSizeBinding, in: 96...280, step: 8) {
                     Text("Thumbnail Size")
@@ -106,9 +254,11 @@ struct LibraryWindowView: View {
             }
         }
         .focusedSceneValue(\.libraryCommandActions, commandActions)
+        .searchable(text: searchTextBinding, prompt: "Search Library")
         .onAppear {
             model.isInspectorVisible = storedInspectorVisible
             model.thumbnailSize = storedThumbnailSize
+            model.browserPresentation = AssetBrowserPresentation(rawValue: storedBrowserPresentation) ?? .grid
         }
         .task {
             await model.container.restoreLibraryIfAvailable()
@@ -206,6 +356,23 @@ struct LibraryWindowView: View {
         )
     }
 
+    private var browserPresentationBinding: Binding<AssetBrowserPresentation> {
+        Binding(
+            get: { model.browserPresentation },
+            set: { presentation in
+                model.browserPresentation = presentation
+                storedBrowserPresentation = presentation.rawValue
+            }
+        )
+    }
+
+    private var searchTextBinding: Binding<String> {
+        Binding(
+            get: { model.searchText },
+            set: { model.searchText = $0 }
+        )
+    }
+
     private var deletionPromptBinding: Binding<Bool> {
         Binding(
             get: { model.pendingFolderDeletion != nil },
@@ -249,6 +416,8 @@ struct LibraryWindowView: View {
                     await model.createFolder(in: folderID)
                 }
             },
+            createAlbum: { Task { await model.createAlbum() } },
+            createTag: { Task { await model.createTag() } },
             undo: { Task { await model.undoLastAction() } },
             redo: { Task { await model.redoLastAction() } },
             selectAll: { model.selectAllVisibleAssets() },
@@ -256,8 +425,10 @@ struct LibraryWindowView: View {
             canImport: model.container.canBrowseLibrary,
             canCreateFolder: model.container.canBrowseLibrary,
             canCreateSubfolder: model.container.canBrowseLibrary && selectedFolderID != nil,
-            canUndo: model.canUndoFolderAction,
-            canRedo: model.canRedoFolderAction,
+            canCreateAlbum: model.container.canBrowseLibrary,
+            canCreateTag: model.container.canBrowseLibrary,
+            canUndo: model.canUndoAction,
+            canRedo: model.canRedoAction,
             canSelectAll: !model.orderedVisibleAssetIDs.isEmpty
         )
     }
@@ -290,6 +461,20 @@ struct LibraryWindowView: View {
             Task {
                 await model.prepareToDeleteFolder(folderID)
             }
+        case .createAlbum:
+            Task { await model.createAlbum() }
+        case let .deleteAlbum(albumID):
+            Task { await model.deleteAlbum(albumID) }
+        case let .moveAlbum(albumID, earlier):
+            Task { await model.moveAlbum(albumID, earlier: earlier) }
+        case .createTag:
+            Task { await model.createTag() }
+        case let .deleteTag(tagID):
+            Task { await model.deleteTag(tagID) }
+        case let .deleteSavedSearch(savedSearchID):
+            Task { await model.deleteSavedSearch(savedSearchID) }
+        case let .deleteSmartCollection(smartCollectionID):
+            Task { await model.deleteSmartCollection(smartCollectionID) }
         }
     }
 
@@ -348,5 +533,34 @@ struct LibraryWindowView: View {
         .padding(.vertical, 10)
         .background(.bar)
         .accessibilityIdentifier("import.progress")
+    }
+}
+
+private struct DuplicateCandidatesPopover: View {
+    let candidates: [DuplicateCandidate]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Duplicate Candidates")
+                .font(.headline)
+            Text("Suggestions based only on matching SHA-256 checksums. No files will be merged, deleted, or changed here.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if candidates.isEmpty {
+                ContentUnavailableView("No checksum matches", systemImage: "checkmark.circle")
+            } else {
+                List(candidates, id: \.sha256) { candidate in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(candidate.assetIDs.count) matching originals")
+                        Text(candidate.sha256)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(minHeight: 120, maxHeight: 280)
+            }
+        }
+        .padding()
+        .frame(width: 360)
     }
 }

@@ -27,6 +27,7 @@
 		A1000000000000000000000F /* LibraryPackageCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* LibraryPackageCoordinator.swift */; };
 		A10000000000000000000010 /* LibraryPanelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* LibraryPanelService.swift */; };
 		A10000000000000000000011 /* LibrarySetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* LibrarySetupView.swift */; };
+		A10000000000000000000015 /* SearchFiltersPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* SearchFiltersPopover.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +57,7 @@
 		A2000000000000000000000E /* LibraryPackageCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryPackageCoordinator.swift; sourceTree = "<group>"; };
 		A2000000000000000000000F /* LibraryPanelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryPanelService.swift; sourceTree = "<group>"; };
 		A20000000000000000000010 /* LibrarySetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySetupView.swift; sourceTree = "<group>"; };
+		A20000000000000000000011 /* SearchFiltersPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchFiltersPopover.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -123,6 +125,7 @@
 			children = (
 				A20000000000000000000005 /* LibraryWindowView.swift */,
 				A20000000000000000000010 /* LibrarySetupView.swift */,
+				A20000000000000000000011 /* SearchFiltersPopover.swift */,
 			);
 			path = AppShell;
 			sourceTree = "<group>";
@@ -308,6 +311,7 @@
 				A1000000000000000000000F /* LibraryPackageCoordinator.swift in Sources */,
 				A10000000000000000000010 /* LibraryPanelService.swift in Sources */,
 				A10000000000000000000011 /* LibrarySetupView.swift in Sources */,
+				A10000000000000000000015 /* SearchFiltersPopover.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

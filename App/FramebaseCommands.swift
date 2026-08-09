@@ -5,6 +5,8 @@ struct LibraryCommandActions {
     let importAssets: () -> Void
     let createFolder: () -> Void
     let createSubfolder: () -> Void
+    let createAlbum: () -> Void
+    let createTag: () -> Void
     let undo: () -> Void
     let redo: () -> Void
     let selectAll: () -> Void
@@ -12,6 +14,8 @@ struct LibraryCommandActions {
     let canImport: Bool
     let canCreateFolder: Bool
     let canCreateSubfolder: Bool
+    let canCreateAlbum: Bool
+    let canCreateTag: Bool
     let canUndo: Bool
     let canRedo: Bool
     let canSelectAll: Bool
@@ -58,6 +62,16 @@ struct FramebaseCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: [.command, .option, .shift])
             .disabled(actions?.canCreateSubfolder != true)
+
+            Button("New Album") {
+                actions?.createAlbum()
+            }
+            .disabled(actions?.canCreateAlbum != true)
+
+            Button("New Tag") {
+                actions?.createTag()
+            }
+            .disabled(actions?.canCreateTag != true)
 
             Divider()
 

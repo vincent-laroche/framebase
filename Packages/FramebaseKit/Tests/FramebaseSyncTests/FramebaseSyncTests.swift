@@ -54,11 +54,23 @@ private final class FakeAPIClient: APIClientProtocol, @unchecked Sendable {
         fatalError("not used in these tests")
     }
 
+    func uploadBlobFile(
+        at fileURL: URL,
+        contentType: String,
+        toRelativePath relativePath: String
+    ) async throws -> BlobUploadDirectResponse {
+        fatalError("not used in these tests")
+    }
+
     func completeBlobUpload(_ request: BlobUploadCompleteRequest) async throws -> BlobUploadCompleteResponse {
         fatalError("not used in these tests")
     }
 
     func downloadBlob(id: String) async throws -> BlobDownload { fatalError("not used in these tests") }
+
+    func registerAsset(_ request: AssetRegistrationRequest, idempotencyKey: String) async throws -> AssetRegistrationResponse {
+        fatalError("not used in these tests")
+    }
 
     func fetchChanges(after: Int, limit: Int) async throws -> ChangesResponse {
         changesHandler(after, limit)

@@ -129,3 +129,84 @@ public struct AlbumAsset: Codable, Hashable, Sendable {
         self.sortOrder = sortOrder
     }
 }
+
+public struct Tag: Identifiable, Codable, Hashable, Sendable {
+    public let id: TagID
+    public var name: String
+    public let createdAt: Date
+    public var updatedAt: Date
+    public var sortOrder: Int64
+
+    public init(id: TagID, name: String, createdAt: Date, updatedAt: Date, sortOrder: Int64) {
+        self.id = id
+        self.name = name
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.sortOrder = sortOrder
+    }
+}
+
+public struct TagAsset: Codable, Hashable, Sendable {
+    public let tagID: TagID
+    public let assetID: AssetID
+    public let addedAt: Date
+
+    public init(tagID: TagID, assetID: AssetID, addedAt: Date) {
+        self.tagID = tagID
+        self.assetID = assetID
+        self.addedAt = addedAt
+    }
+}
+
+public struct SavedSearch: Identifiable, Codable, Hashable, Sendable {
+    public let id: SavedSearchID
+    public var name: String
+    public var query: AssetQuery
+    public let createdAt: Date
+    public var updatedAt: Date
+    public var sortOrder: Int64
+
+    public init(
+        id: SavedSearchID,
+        name: String,
+        query: AssetQuery,
+        createdAt: Date,
+        updatedAt: Date,
+        sortOrder: Int64
+    ) {
+        self.id = id
+        self.name = name
+        self.query = query
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.sortOrder = sortOrder
+    }
+}
+
+/// A continuously evaluated local collection. Its members are the current
+/// result of a structured `AssetQuery`; no asset membership is copied or
+/// materialized, so editing a rule cannot change logical asset state.
+public struct SmartCollection: Identifiable, Codable, Hashable, Sendable {
+    public let id: SmartCollectionID
+    public var name: String
+    public var query: AssetQuery
+    public let createdAt: Date
+    public var updatedAt: Date
+    public var sortOrder: Int64
+
+    public init(
+        id: SmartCollectionID,
+        name: String,
+        query: AssetQuery,
+        createdAt: Date,
+        updatedAt: Date,
+        sortOrder: Int64
+    ) {
+        self.id = id
+        self.name = name
+        self.query = query
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.sortOrder = sortOrder
+    }
+}

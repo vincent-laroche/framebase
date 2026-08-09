@@ -311,10 +311,54 @@ struct FramebaseAPIClientTests {
         }
     }
 
-    @Test("The full blob upload flow initiates, PUTs bytes to the returned relative path, then completes")
+    @Test("registerAsset() sends the idempotency key and typed asset payload")
+    func registerAssetSucceeds() async throws {
+        let (client, _) = makeClient()
+        let recorder = RequestRecorder()
+        StubURLProtocol.handler = respondingHandler(
+            with: (200, [:], jsonBody(AssetRegistrationResponse(
+                status: "registered",
+                assetId: "asset-1",
+                blobId: "blob-1",
+                revision: 7
+            ))),
+            recorder: recorder
+        )
+
+        let response = try await client.registerAsset(
+            AssetRegistrationRequest(
+                clientMutationId: "register-asset-1",
+                assetId: "asset-1",
+                blobId: "blob-1",
+                folderId: "folder-1",
+                filename: "fixture.jpg",
+                displayName: "Fixture",
+                width: 2,
+                height: 2,
+                createdAt: "2026-08-09T12:00:00.000Z",
+                modifiedAt: "2026-08-09T12:00:00.000Z",
+                importedAt: "2026-08-09T12:00:00.000Z",
+                favorite: false,
+                rating: 0,
+                metadata: .object(["source": .string("fixture")])
+            ),
+            idempotencyKey: "register-asset-1"
+        )
+
+        #expect(response.revision == 7)
+        #expect(recorder.last?.url?.path == "/v1/assets/register")
+        #expect(recorder.last?.httpMethod == "POST")
+        #expect(recorder.last?.value(forHTTPHeaderField: "Authorization") == "Bearer token-1")
+        #expect(recorder.last?.value(forHTTPHeaderField: "Idempotency-Key") == "register-asset-1")
+    }
+
+    @Test("The full blob upload flow initiates, PUTs a file to the returned relative path, then completes")
     func blobUploadFlowSucceeds() async throws {
         let (client, _) = makeClient()
         let payload = Data("fixture-bytes".utf8)
+        let fileURL = FileManager.default.temporaryDirectory.appending(path: "FramebaseAPIClientTests-\(UUID().uuidString).jpg", directoryHint: .notDirectory)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        try payload.write(to: fileURL, options: .atomic)
         let recorder = RequestRecorder()
 
         StubURLProtocol.handler = { request in
@@ -324,7 +368,7 @@ struct FramebaseAPIClientTests {
                 return (200, [:], jsonBody(BlobUploadInitiateResponse(
                     blobId: "sha-1",
                     r2Key: "blobs/sha256/sh/sha-1.jpg",
-                    uploadUrl: "/v1/blobs/upload-direct?key=blobs%2Fsha256%2Fsh%2Fsha-1.jpg",
+                    uploadUrl: "/v1/blobs/upload-direct?blobId=sha-1",
                     expiresAt: "2026-08-09T12:15:00.000Z"
                 )))
             case ("PUT", "/v1/blobs/upload-direct"):
@@ -343,8 +387,8 @@ struct FramebaseAPIClientTests {
         let initiated = try await client.initiateBlobUpload(
             BlobUploadInitiateRequest(sha256: "sha-1", byteSize: payload.count, mediaType: "image/jpeg", originalExtension: "jpg")
         )
-        let uploaded = try await client.uploadBlobBytes(
-            payload,
+        let uploaded = try await client.uploadBlobFile(
+            at: fileURL,
             contentType: "image/jpeg",
             toRelativePath: initiated.uploadUrl
         )
@@ -356,7 +400,7 @@ struct FramebaseAPIClientTests {
         #expect(completed.status == "verified")
 
         let uploadRequest = recorder.all.first { $0.httpMethod == "PUT" }
-        #expect(uploadRequest?.url?.query == "key=blobs%2Fsha256%2Fsh%2Fsha-1.jpg")
+        #expect(uploadRequest?.url?.query == "blobId=sha-1")
         #expect(uploadRequest?.value(forHTTPHeaderField: "Content-Type") == "image/jpeg")
     }
 

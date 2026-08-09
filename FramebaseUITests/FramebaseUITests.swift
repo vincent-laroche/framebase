@@ -6,8 +6,21 @@ import XCTest
 final class FramebaseUITests: XCTestCase {
     @MainActor
     func testMainWindowLaunches() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-\(UUID().uuidString).framebase", isDirectory: true)
         let app = XCUIApplication()
+        // A launch smoke test must not inherit the developer's persisted
+        // library or cloud enrollment: that would make the test reach for
+        // Keychain and block on a human authorization dialog.
+        app.launchEnvironment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] = rootURL.path
         app.launch()
+        defer {
+            app.terminate()
+            if rootURL.lastPathComponent.hasPrefix("FramebaseUITests-"),
+               rootURL.pathExtension == "framebase" {
+                try? FileManager.default.removeItem(at: rootURL)
+            }
+        }
 
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
     }
@@ -108,6 +121,57 @@ final class FramebaseUITests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testNewAlbumAndTagAppearInTheNativeSidebar() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-\(UUID().uuidString).framebase", isDirectory: true)
+        let app = XCUIApplication()
+        app.launchEnvironment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] = rootURL.path
+        app.launch()
+        defer {
+            app.terminate()
+            if rootURL.lastPathComponent.hasPrefix("FramebaseUITests-"),
+               rootURL.pathExtension == "framebase" {
+                try? FileManager.default.removeItem(at: rootURL)
+            }
+        }
+
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(sidebarItem(named: "All Assets", in: app).waitForExistence(timeout: 5))
+
+        app.menuBars.menuBarItems["File"].click()
+        let newAlbum = app.menuItems["New Album"]
+        XCTAssertTrue(newAlbum.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForHittable(newAlbum, timeout: 5), "New Album was visible but had no clickable frame.")
+        newAlbum.click()
+        XCTAssertTrue(sidebarItem(named: "New Album", in: app).waitForExistence(timeout: 5))
+        sidebarItem(named: "New Album", in: app).click()
+        app.typeKey(.return, modifierFlags: [])
+        app.typeText("Campaign")
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(sidebarItem(named: "Campaign", in: app).waitForExistence(timeout: 5))
+
+        app.menuBars.menuBarItems["File"].click()
+        let newTag = app.menuItems["New Tag"]
+        XCTAssertTrue(newTag.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForHittable(newTag, timeout: 5), "New Tag was visible but had no clickable frame.")
+        newTag.click()
+        XCTAssertTrue(sidebarItem(named: "New Tag", in: app).waitForExistence(timeout: 5))
+        sidebarItem(named: "New Tag", in: app).click()
+        XCTAssertTrue(app.windows["New Tag"].waitForExistence(timeout: 5))
+        app.typeKey(.delete, modifierFlags: [])
+        XCTAssertFalse(sidebarItem(named: "New Tag", in: app).waitForExistence(timeout: 5))
+
+        app.menuBars.menuBarItems["Edit"].click()
+        let undoItem = app.menuItems["Undo"]
+        XCTAssertTrue(undoItem.waitForExistence(timeout: 5), app.menuItems.debugDescription)
+        undoItem.click()
+        XCTAssertTrue(
+            sidebarItem(named: "New Tag", in: app).waitForExistence(timeout: 5),
+            "Undo must restore a deleted tag to the native sidebar."
+        )
+    }
+
     /// The rest of the suite runs against an empty library, so no collection
     /// view cell is ever dequeued and no thumbnail is ever decoded. Importing
     /// real images and asserting a cell renders is what covers that path.
@@ -146,7 +210,9 @@ final class FramebaseUITests: XCTestCase {
         }
 
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(sidebarItem(named: "All Assets", in: app).waitForExistence(timeout: 5))
+        let allAssets = sidebarItem(named: "All Assets", in: app)
+        XCTAssertTrue(allAssets.waitForExistence(timeout: 5))
+        allAssets.click()
 
         app.typeKey("i", modifierFlags: [.command, .shift])
 
@@ -204,11 +270,111 @@ final class FramebaseUITests: XCTestCase {
             "Command-A did not select every asset while the grid had focus."
         )
 
+        let moveToTrash = app.descendants(matching: .any)["toolbar.moveToTrash"]
+        XCTAssertTrue(moveToTrash.waitForExistence(timeout: 5), "Move to Trash is missing from the browser toolbar.")
+        moveToTrash.click()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["assetBrowser.empty.All Assets"].waitForExistence(timeout: 10),
+            "Moving the selected fixture assets to Trash did not clear the current destination."
+        )
+        let trash = sidebarItem(named: "Trash", in: app)
+        XCTAssertTrue(trash.waitForExistence(timeout: 5))
+        trash.click()
+        XCTAssertTrue(grid.waitForExistence(timeout: 10), "Trash did not show the selected fixture assets.")
+        app.typeKey("a", modifierFlags: [.command])
+        let restore = app.descendants(matching: .any)["toolbar.restoreFromTrash"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 5), "Restore is missing from the Trash toolbar.")
+        restore.click()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["assetBrowser.empty.Trash"].waitForExistence(timeout: 10),
+            "Restoring selected assets did not clear Trash."
+        )
+        allAssets.click()
+        XCTAssertTrue(grid.waitForExistence(timeout: 10), "Restore did not return the fixture assets to All Assets.")
+
+        // This stays fixture-only. It will run in CI or a dedicated session;
+        // local headless verification compiles the target but never drives the
+        // active macOS desktop through XCUITest.
+        let presentation = app.segmentedControls["assetBrowser.presentation"]
+        XCTAssertTrue(presentation.waitForExistence(timeout: 5), "The browser presentation control is missing.")
+        presentation.buttons["List"].click()
+        let list = app.descendants(matching: .any)["assetBrowser.list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 10), "List presentation did not replace the grid.")
+        app.typeKey("a", modifierFlags: [.command])
+        XCTAssertTrue(
+            app.staticTexts["Selection"].waitForExistence(timeout: 10),
+            "Command-A did not select the paged list records."
+        )
+        presentation.buttons["Grid"].click()
+        XCTAssertTrue(grid.waitForExistence(timeout: 10), "Grid presentation did not restore after list verification.")
+
+        let searchField = app.searchFields["Search Library"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "The native structured search field is missing.")
+        searchField.click()
+        searchField.typeText("sample-0")
+        let filteredCells = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "asset.")
+        )
+        let oneFilteredCell = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == 1"),
+            object: filteredCells
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [oneFilteredCell], timeout: 10), .completed)
+        XCTAssertEqual(filteredCells.count, 1, "Search did not reduce the browser to its one matching asset.")
+
+        let savedSearches = app.descendants(matching: .any)["toolbar.savedSearches"]
+        XCTAssertTrue(savedSearches.waitForExistence(timeout: 5), "Saved Searches is missing from the browser toolbar.")
+        savedSearches.click()
+        let saveCurrentSearch = app.menuItems["Save Current Search"]
+        XCTAssertTrue(saveCurrentSearch.waitForExistence(timeout: 5), app.menuItems.debugDescription)
+        saveCurrentSearch.click()
+
+        let smartCollections = app.descendants(matching: .any)["toolbar.smartCollections"]
+        XCTAssertTrue(smartCollections.waitForExistence(timeout: 5), "Smart Collections is missing from the browser toolbar.")
+        smartCollections.click()
+        let createSmartCollection = app.menuItems["Create From Current Rules"]
+        XCTAssertTrue(createSmartCollection.waitForExistence(timeout: 5), app.menuItems.debugDescription)
+        createSmartCollection.click()
+        let smartCollection = app.textFields["sidebar.item.Smart Collection"]
+        XCTAssertTrue(smartCollection.waitForExistence(timeout: 5), "The rule-backed smart collection was not added to the sidebar.")
+
+        let savedSearch = app.textFields["sidebar.item.Saved Search"]
+        XCTAssertTrue(savedSearch.waitForExistence(timeout: 5), "The saved rule was not added to the sidebar.")
+        savedSearch.click()
+        app.typeKey(.return, modifierFlags: [])
+        app.typeKey("a", modifierFlags: [.command])
+        app.typeText("Sample Search")
+        app.typeKey(.return, modifierFlags: [])
+        let renamedSavedSearch = app.textFields["sidebar.item.Sample Search"]
+        XCTAssertTrue(renamedSavedSearch.waitForExistence(timeout: 5), "The saved rule could not be renamed inline.")
+
+        searchField.click()
+        app.typeKey("a", modifierFlags: [.command])
+        app.typeKey(.delete, modifierFlags: [])
+        allAssets.click()
+        let restoredCells = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count > 1"),
+            object: filteredCells
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [restoredCells], timeout: 10), .completed)
+
+        renamedSavedSearch.click()
+        let reappliedCells = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == 1"),
+            object: filteredCells
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [reappliedCells], timeout: 10), .completed)
+
+        allAssets.click()
+        XCTAssertEqual(XCTWaiter.wait(for: [restoredCells], timeout: 10), .completed)
+        smartCollection.click()
+        XCTAssertEqual(XCTWaiter.wait(for: [reappliedCells], timeout: 10), .completed)
+
         attachScreenshot(named: "ImportedCellRendered", in: app)
     }
 
     /// Scaled fixture test (300+ assets) that verifies:
-    /// 1) Grid thumbnail rendering under scale with real/synthetic images.
+    /// 1) Grid thumbnail rendering under scale with synthetic images only.
     /// 2) Command-A selects all assets and updates inspector to "Selection".
     /// 3) Single click collapses a multi-selection back to 1 asset ("File" inspector).
     /// 4) Captures XCTAttachment screenshots at key milestones for visual verification.
@@ -220,23 +386,8 @@ final class FramebaseUITests: XCTestCase {
             .appendingPathComponent("FramebaseUITests-Sources-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: sourceDirectoryURL, withIntermediateDirectories: true)
 
-        var sourceURLs: [URL] = []
-        let downloadsExportURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads/01_library_2026-08-06_04_46", isDirectory: true)
-        if let enumerator = FileManager.default.enumerator(at: downloadsExportURL, includingPropertiesForKeys: nil) {
-            for case let fileURL as URL in enumerator {
-                if ["jpg", "jpeg"].contains(fileURL.pathExtension.lowercased()) {
-                    sourceURLs.append(fileURL)
-                    if sourceURLs.count >= 300 { break }
-                }
-            }
-        }
-        let realCount = sourceURLs.count
-        if sourceURLs.count < 300 {
-            for index in realCount..<300 {
-                let url = try writeJPEG(named: "scaled-sample-\(index).jpg", in: sourceDirectoryURL)
-                sourceURLs.append(url)
-            }
+        let sourceURLs = try (0..<300).map { index in
+            try writeJPEG(named: "scaled-sample-\(index).jpg", in: sourceDirectoryURL)
         }
 
         let app = XCUIApplication()
@@ -349,6 +500,14 @@ final class FramebaseUITests: XCTestCase {
     @MainActor
     private func sidebarItem(named name: String, in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any)["sidebar.item.\(name)"]
+    }
+
+    private func waitForHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isHittable == true"),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     @MainActor

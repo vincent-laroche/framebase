@@ -70,6 +70,24 @@ public final class FramebaseAPIClient: APIClientProtocol, Sendable {
         return try await performJSON(request)
     }
 
+    public func uploadBlobFile(
+        at fileURL: URL,
+        contentType: String,
+        toRelativePath relativePath: String
+    ) async throws -> BlobUploadDirectResponse {
+        guard fileURL.isFileURL, let resolvedURL = URL(string: relativePath, relativeTo: baseURL) else {
+            throw APIClientError.badRequest(
+                code: "INVALID_UPLOAD_PATH",
+                message: "Malformed upload path: \(relativePath)"
+            )
+        }
+        var request = URLRequest(url: resolvedURL.absoluteURL)
+        request.httpMethod = "PUT"
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        try await attachAuthorization(to: &request)
+        return try await performJSON(request, uploadingFileAt: fileURL)
+    }
+
     public func completeBlobUpload(_ body: BlobUploadCompleteRequest) async throws -> BlobUploadCompleteResponse {
         var request = try await makeRequest(method: "POST", path: "/v1/blobs/upload-complete", authenticated: true)
         request.httpBody = try Self.jsonEncoder.encode(body)
@@ -92,6 +110,13 @@ public final class FramebaseAPIClient: APIClientProtocol, Sendable {
             contentType: response.value(forHTTPHeaderField: "Content-Type"),
             etag: response.value(forHTTPHeaderField: "etag")
         )
+    }
+
+    public func registerAsset(_ body: AssetRegistrationRequest, idempotencyKey: String) async throws -> AssetRegistrationResponse {
+        var request = try await makeRequest(method: "POST", path: "/v1/assets/register", authenticated: true)
+        request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+        request.httpBody = try Self.jsonEncoder.encode(body)
+        return try await performJSON(request)
     }
 
     public func submitMutations(_ body: MutationsRequest, idempotencyKey: String) async throws -> MutationsResponse {
@@ -148,6 +173,15 @@ public final class FramebaseAPIClient: APIClientProtocol, Sendable {
         }
     }
 
+    private func performJSON<T: Decodable>(_ request: URLRequest, uploadingFileAt fileURL: URL) async throws -> T {
+        let (data, _) = try await performRaw(request, uploadingFileAt: fileURL)
+        do {
+            return try Self.jsonDecoder.decode(T.self, from: data)
+        } catch {
+            throw APIClientError.decoding(message: String(describing: error))
+        }
+    }
+
     private func performRaw(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let response: URLResponse
@@ -158,6 +192,23 @@ public final class FramebaseAPIClient: APIClientProtocol, Sendable {
         }
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIClientError.transport(message: "Response was not an HTTP response")
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw Self.error(forStatus: httpResponse.statusCode, body: data)
+        }
+        return (data, httpResponse)
+    }
+
+    private func performRaw(_ request: URLRequest, uploadingFileAt fileURL: URL) async throws -> (Data, HTTPURLResponse) {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await urlSession.upload(for: request, fromFile: fileURL)
+        } catch {
+            throw APIClientError.transport(message: error.localizedDescription)
+        }
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIClientError.transport(message: "The server returned a non-HTTP response.")
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw Self.error(forStatus: httpResponse.statusCode, body: data)

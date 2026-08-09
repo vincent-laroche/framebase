@@ -19,10 +19,22 @@ Run package tests:
 swift test --package-path Packages/FramebaseKit
 ```
 
-Build and launch the app through the project entrypoint:
+Run the headless build gate through the project entrypoint:
 
 ```sh
-./script/build_and_run.sh
+./script/build_and_run.sh --verify
 ```
 
-The current Phase 1 application remains intentionally unsandboxed. It contains no networking, authentication, cloud synchronization, AI, OCR, or permanent asset deletion. Those capabilities are planned in later roadmap phases and must not be described as already built.
+This command never kills or launches the GUI app. It runs `xcodebuild` for the
+macOS target followed by the package tests, so it does not take focus from an
+active desktop session. Native macOS UI tests are deliberately not part of the
+local headless gate because XCTest drives the host desktop session; run them
+only in an isolated CI/macOS test environment. The repository's macOS CI job
+compiles and runs `FramebaseUITests` on its own runner, never on a developer's
+active desktop.
+
+The core local asset manager remains intentionally unsandboxed. Its development
+cloud enrollment/catalog-sync path is separately double-gated in Settings and
+is never enabled by default. There is no permanent asset deletion, and later
+Finder, intelligence, workflow, and agent features remain governed by their
+own roadmap phases.

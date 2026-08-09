@@ -13,7 +13,8 @@ let package = Package(
         .library(name: "FramebaseMedia", targets: ["FramebaseMedia"]),
         .library(name: "FramebaseAPIClient", targets: ["FramebaseAPIClient"]),
         .library(name: "FramebaseSync", targets: ["FramebaseSync"]),
-        .library(name: "FramebaseCatalogSync", targets: ["FramebaseCatalogSync"])
+        .library(name: "FramebaseCatalogSync", targets: ["FramebaseCatalogSync"]),
+        .library(name: "FramebaseMigration", targets: ["FramebaseMigration"])
     ],
     dependencies: [
         .package(
@@ -51,6 +52,10 @@ let package = Package(
             dependencies: ["FramebaseDomain", "FramebaseCatalog", "FramebaseAPIClient", "FramebaseSync"]
         ),
         .target(
+            name: "FramebaseMigration",
+            dependencies: ["FramebaseDomain", "FramebaseCatalog", "FramebaseMedia", "FramebaseAPIClient", "FramebaseSync", .product(name: "GRDB", package: "GRDB.swift")]
+        ),
+        .target(
             name: "FramebaseTestSupport",
             dependencies: ["FramebaseDomain"]
         ),
@@ -82,6 +87,10 @@ let package = Package(
         .testTarget(
             name: "FramebaseCatalogSyncTests",
             dependencies: ["FramebaseCatalogSync", "FramebaseTestSupport"]
+        ),
+        .testTarget(
+            name: "FramebaseMigrationTests",
+            dependencies: ["FramebaseMigration", "FramebaseTestSupport"]
         )
     ]
 )

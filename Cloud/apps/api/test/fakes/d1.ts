@@ -13,6 +13,10 @@ class FakeD1PreparedStatement {
   }
 
   async run() {
+    return this.runSynchronously();
+  }
+
+  runSynchronously() {
     const info = this.db.prepare(this.sql).run(...(this.params as never[]));
     return {
       results: [],
@@ -39,6 +43,22 @@ export function createFakeD1(schemaSql: string): D1Database {
   return {
     prepare(sql: string) {
       return new FakeD1PreparedStatement(db, sql) as unknown as D1PreparedStatement;
+    },
+    async batch(statements: D1PreparedStatement[]) {
+      db.exec('BEGIN');
+      try {
+        const results = statements.map((statement) => {
+          if (!(statement instanceof FakeD1PreparedStatement)) {
+            throw new Error('Fake D1 batch only accepts statements from its own database');
+          }
+          return statement.runSynchronously();
+        });
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
     }
   } as unknown as D1Database;
 }

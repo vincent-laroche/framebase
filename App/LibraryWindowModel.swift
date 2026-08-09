@@ -1,4 +1,6 @@
+import AppKit
 import FramebaseDomain
+import FramebaseMedia
 import Foundation
 import Observation
 
@@ -11,23 +13,40 @@ struct FolderDeletionPrompt: Identifiable, Sendable {
     var id: FolderID { folderID }
 }
 
-private struct FolderHistoryEntry: Sendable {
+private struct LibraryHistoryEntry: Sendable {
     let actionName: String
-    let action: FolderHistoryAction
+    let action: LibraryHistoryAction
 }
 
-private enum FolderHistoryAction: Sendable {
-    case rename(FolderID, to: FolderName)
-    case reparent(FolderID, to: FolderID?)
-    case delete(FolderID)
-    case restore(FolderDeletionReceipt)
+private enum LibraryHistoryAction: Sendable {
+    case renameFolder(FolderID, to: FolderName)
+    case reparentFolder(FolderID, to: FolderID?)
+    case deleteFolder(FolderID)
+    case restoreFolder(FolderDeletionReceipt)
+    case renameAlbum(AlbumID, to: String)
+    case reorderAlbums([AlbumID])
+    case deleteAlbum(AlbumID)
+    case restoreAlbum(AlbumDeletionReceipt)
+    case renameTag(TagID, to: String)
+    case deleteTag(TagID)
+    case restoreTag(TagDeletionReceipt)
+    case renameAsset(AssetID, to: String)
+    case restoreAssetLocations(AssetMoveReceipt)
+    case restoreTrash(TrashReceipt)
+    case moveToTrash(Set<AssetID>)
 }
 
-private enum FolderHistoryError: LocalizedError {
+private enum LibraryHistoryError: LocalizedError {
     case folderUnavailable
+    case albumUnavailable
+    case tagUnavailable
 
     var errorDescription: String? {
-        "The folder is no longer available for that history action."
+        switch self {
+        case .folderUnavailable: "The folder is no longer available for that history action."
+        case .albumUnavailable: "The album is no longer available for that history action."
+        case .tagUnavailable: "The tag is no longer available for that history action."
+        }
     }
 }
 
@@ -44,6 +63,10 @@ enum NavigationTarget: Hashable, Sendable {
     case favorites
     case folder(FolderID)
     case album(AlbumID)
+    case tag(TagID)
+    case savedSearch(SavedSearchID)
+    case smartCollection(SmartCollectionID)
+    case trash
 
     var title: String {
         switch self {
@@ -52,6 +75,10 @@ enum NavigationTarget: Hashable, Sendable {
         case .favorites: "Favorites"
         case .folder: "Folder"
         case .album: "Album"
+        case .tag: "Tag"
+        case .savedSearch: "Saved Search"
+        case .smartCollection: "Smart Collection"
+        case .trash: "Trash"
         }
     }
 
@@ -62,6 +89,10 @@ enum NavigationTarget: Hashable, Sendable {
         case .favorites: .favorites
         case let .folder(id): .folder(id)
         case let .album(id): .album(id)
+        case let .tag(id): .tag(id)
+        case .savedSearch: .allAssets
+        case .smartCollection: .allAssets
+        case .trash: .trash
         }
     }
 }
@@ -73,14 +104,24 @@ final class LibraryWindowModel {
 
     var navigationTarget: NavigationTarget = .allAssets {
         didSet {
-            assetQuery = AssetQuery(scope: navigationTarget.assetScope)
+            assetQuery = queryForNavigationTarget()
             restartAssetObservation()
         }
     }
     var assetQuery = AssetQuery(scope: .allAssets)
+    var searchText = "" {
+        didSet {
+            guard searchText != oldValue else { return }
+            var query = queryForNavigationTarget()
+            query.criteria.text = AssetSearchCriteria(text: searchText).text
+            assetQuery = query
+            restartAssetObservation()
+        }
+    }
     var assetSort = AssetSort.defaultSort {
         didSet { restartAssetObservation() }
     }
+    var browserPresentation: AssetBrowserPresentation = .grid
     var orderedVisibleAssetIDs: [AssetID] = []
     var assetGridRecords: [AssetGridRecord] = []
     var thumbnailStates: [AssetID: AssetThumbnailState] = [:]
@@ -100,6 +141,11 @@ final class LibraryWindowModel {
     var sidebarFocusRequestGeneration = 0
     var folderTreeSnapshot: FolderTreeSnapshot?
     var albums: [Album] = []
+    var tags: [Tag] = []
+    var savedSearches: [SavedSearch] = []
+    var smartCollections: [SmartCollection] = []
+    var trashEntriesByAssetID: [AssetID: TrashEntry] = [:]
+    var duplicateCandidates: [DuplicateCandidate] = []
     var pendingFolderDeletion: FolderDeletionPrompt?
     var isInspectorVisible = true
     var thumbnailSize: Double = 176 {
@@ -113,20 +159,28 @@ final class LibraryWindowModel {
     var importProgress: ImportProgress?
     var statusMessage: String?
 
-    private var undoHistory: [FolderHistoryEntry] = []
-    private var redoHistory: [FolderHistoryEntry] = []
-    private var isApplyingFolderHistory = false
+    private var undoHistory: [LibraryHistoryEntry] = []
+    private var redoHistory: [LibraryHistoryEntry] = []
+    private var isApplyingHistory = false
 
-    var canUndoFolderAction: Bool { !undoHistory.isEmpty && !isApplyingFolderHistory }
-    var canRedoFolderAction: Bool { !redoHistory.isEmpty && !isApplyingFolderHistory }
-    var undoFolderActionName: String { undoHistory.last.map { "Undo \($0.actionName)" } ?? "Undo" }
-    var redoFolderActionName: String { redoHistory.last.map { "Redo \($0.actionName)" } ?? "Redo" }
+    var canUndoAction: Bool { !undoHistory.isEmpty && !isApplyingHistory }
+    var canRedoAction: Bool { !redoHistory.isEmpty && !isApplyingHistory }
+    var undoActionName: String { undoHistory.last.map { "Undo \($0.actionName)" } ?? "Undo" }
+    var redoActionName: String { redoHistory.last.map { "Redo \($0.actionName)" } ?? "Redo" }
+    var moveDestinationFolders: [Folder] {
+        folderTreeSnapshot?.folders.sorted {
+            $0.name.rawValue.localizedStandardCompare($1.name.rawValue) == .orderedAscending
+        } ?? []
+    }
 
     @ObservationIgnored private var observationTask: Task<Void, Never>?
     @ObservationIgnored private var thumbnailPrefetchTask: Task<Void, Never>?
     @ObservationIgnored private var thumbnailTasks: [AssetID: (ThumbnailRequestID, Task<Void, Never>)] = [:]
     @ObservationIgnored private var folderObservationTask: Task<Void, Never>?
     @ObservationIgnored private var albumObservationTask: Task<Void, Never>?
+    @ObservationIgnored private var tagObservationTask: Task<Void, Never>?
+    @ObservationIgnored private var savedSearchObservationTask: Task<Void, Never>?
+    @ObservationIgnored private var smartCollectionObservationTask: Task<Void, Never>?
     @ObservationIgnored private var inspectorTask: Task<Void, Never>?
     @ObservationIgnored private var inspectorPreviewTask: Task<Void, Never>?
     @ObservationIgnored private var inspectorPreviewRequestID: ThumbnailRequestID?
@@ -141,6 +195,9 @@ final class LibraryWindowModel {
         for (_, entry) in thumbnailTasks { entry.1.cancel() }
         folderObservationTask?.cancel()
         albumObservationTask?.cancel()
+        tagObservationTask?.cancel()
+        savedSearchObservationTask?.cancel()
+        smartCollectionObservationTask?.cancel()
         inspectorTask?.cancel()
         inspectorPreviewTask?.cancel()
     }
@@ -190,12 +247,12 @@ final class LibraryWindowModel {
     }
 
     func undoLastAction() async {
-        guard !isApplyingFolderHistory, let entry = undoHistory.popLast() else { return }
-        isApplyingFolderHistory = true
-        defer { isApplyingFolderHistory = false }
+        guard !isApplyingHistory, let entry = undoHistory.popLast() else { return }
+        isApplyingHistory = true
+        defer { isApplyingHistory = false }
         do {
-            let inverse = try await performFolderHistoryAction(entry.action)
-            redoHistory.append(FolderHistoryEntry(actionName: entry.actionName, action: inverse))
+            let inverse = try await performHistoryAction(entry.action)
+            redoHistory.append(LibraryHistoryEntry(actionName: entry.actionName, action: inverse))
         } catch {
             undoHistory.append(entry)
             statusMessage = error.localizedDescription
@@ -203,12 +260,12 @@ final class LibraryWindowModel {
     }
 
     func redoLastAction() async {
-        guard !isApplyingFolderHistory, let entry = redoHistory.popLast() else { return }
-        isApplyingFolderHistory = true
-        defer { isApplyingFolderHistory = false }
+        guard !isApplyingHistory, let entry = redoHistory.popLast() else { return }
+        isApplyingHistory = true
+        defer { isApplyingHistory = false }
         do {
-            let inverse = try await performFolderHistoryAction(entry.action)
-            undoHistory.append(FolderHistoryEntry(actionName: entry.actionName, action: inverse))
+            let inverse = try await performHistoryAction(entry.action)
+            undoHistory.append(LibraryHistoryEntry(actionName: entry.actionName, action: inverse))
         } catch {
             redoHistory.append(entry)
             statusMessage = error.localizedDescription
@@ -228,7 +285,15 @@ final class LibraryWindowModel {
                 .description ?? navigationTarget.title
         case let .album(albumID):
             albums.first { $0.id == albumID }?.name ?? navigationTarget.title
+        case let .tag(tagID):
+            tags.first { $0.id == tagID }?.name ?? navigationTarget.title
+        case let .savedSearch(savedSearchID):
+            savedSearches.first { $0.id == savedSearchID }?.name ?? navigationTarget.title
+        case let .smartCollection(smartCollectionID):
+            smartCollections.first { $0.id == smartCollectionID }?.name ?? navigationTarget.title
         case .allAssets, .inbox, .favorites:
+            navigationTarget.title
+        case .trash:
             navigationTarget.title
         }
     }
@@ -347,7 +412,86 @@ final class LibraryWindowModel {
         guard canMoveAssets(assetIDs, to: folderID),
               let repository = container.assetRepository else { return }
         do {
-            try await repository.moveAssets(assetIDs, to: folderID)
+            let receipt = try await repository.moveAssetsWithReceipt(assetIDs, to: folderID)
+            recordAction(named: "Move Assets", undo: .restoreAssetLocations(receipt))
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func renameSelectedAsset(to displayName: String) async {
+        guard selectedAssetIDs.count == 1,
+              let assetID = selectedAssetIDs.first,
+              let repository = container.assetRepository else { return }
+        do {
+            guard let asset = try await repository.asset(id: assetID) else { return }
+            try await repository.updateDisplayName(displayName, for: assetID)
+            recordAction(named: "Rename Asset", undo: .renameAsset(assetID, to: asset.displayName))
+            await refreshInspectorNow()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func revealSelectedOriginals() {
+        guard !selectedAssetIDs.isEmpty,
+              let libraryRootURL = container.libraryRootURL,
+              !selectedAssets.isEmpty else { return }
+        let originalsURL = libraryRootURL.appendingPathComponent("Originals", isDirectory: true)
+        let fileURLs = selectedAssets
+            .map { originalsURL.appendingPathComponent($0.storageKey.rawValue, isDirectory: false) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !fileURLs.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(fileURLs)
+    }
+
+    func moveSelectedAssetsToTrash() async {
+        guard !selectedAssetIDs.isEmpty, let repository = container.assetRepository else { return }
+        do {
+            let receipt = try await repository.moveToTrash(selectedAssetIDs, retentionDays: 30)
+            selectedAssetIDs = []
+            recordAction(named: "Move to Trash", undo: .restoreTrash(receipt))
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func restoreSelectedAssetsFromTrash() async {
+        guard !selectedAssetIDs.isEmpty, let repository = container.assetRepository else { return }
+        do {
+            let receipt = try await repository.restoreFromTrash(selectedAssetIDs)
+            selectedAssetIDs = []
+            recordAction(named: "Restore from Trash", undo: .moveToTrash(Set(receipt.entries.map(\.assetID))))
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func exportSelectedAssets(to destinationDirectoryURL: URL) async {
+        guard !selectedAssetIDs.isEmpty,
+              let repository = container.assetRepository,
+              let libraryRootURL = container.libraryRootURL else { return }
+        do {
+            let assets = try await repository.assets(ids: selectedAssetIDs)
+            let originalsURL = libraryRootURL.appendingPathComponent("Originals", isDirectory: true)
+            let exporter = VerifiedExportService()
+            var exportedCount = 0
+            for asset in assets.sorted(by: { $0.filename.localizedStandardCompare($1.filename) == .orderedAscending }) {
+                let sourceURL = originalsURL.appendingPathComponent(asset.storageKey.rawValue, isDirectory: false)
+                let destinationURL = destinationDirectoryURL.appendingPathComponent(asset.filename, isDirectory: false)
+                _ = try await exporter.export(sourceURL: sourceURL, to: destinationURL)
+                exportedCount += 1
+            }
+            _ = exportedCount
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func refreshDuplicateCandidates() async {
+        guard let repository = container.blobRepository else { return }
+        do {
+            duplicateCandidates = try await repository.duplicateCandidates()
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -376,14 +520,26 @@ final class LibraryWindowModel {
     func libraryStateDidChange() {
         folderObservationTask?.cancel()
         albumObservationTask?.cancel()
+        tagObservationTask?.cancel()
+        savedSearchObservationTask?.cancel()
+        smartCollectionObservationTask?.cancel()
         folderObservationTask = nil
         albumObservationTask = nil
+        tagObservationTask = nil
+        savedSearchObservationTask = nil
+        smartCollectionObservationTask = nil
 
         guard case .ready = container.libraryState,
               let folderRepository = container.folderRepository,
-              let albumRepository = container.albumRepository else {
+              let albumRepository = container.albumRepository,
+              let tagRepository = container.tagRepository,
+              let savedSearchRepository = container.savedSearchRepository,
+              let smartCollectionRepository = container.smartCollectionRepository else {
             folderTreeSnapshot = nil
             albums = []
+            tags = []
+            savedSearches = []
+            smartCollections = []
             return
         }
 
@@ -414,6 +570,253 @@ final class LibraryWindowModel {
                 self?.statusMessage = error.localizedDescription
             }
         }
+
+        tagObservationTask = Task { [weak self] in
+            do {
+                for try await observedTags in tagRepository.observeTags() {
+                    guard let self, !Task.isCancelled else { return }
+                    tags = observedTags
+                    if case let .tag(selectedID) = navigationTarget,
+                       !observedTags.contains(where: { $0.id == selectedID }) {
+                        navigationTarget = .allAssets
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.statusMessage = error.localizedDescription
+            }
+        }
+
+        savedSearchObservationTask = Task { [weak self] in
+            do {
+                for try await observedSavedSearches in savedSearchRepository.observeSavedSearches() {
+                    guard let self, !Task.isCancelled else { return }
+                    savedSearches = observedSavedSearches
+                    if case let .savedSearch(selectedID) = navigationTarget,
+                       !observedSavedSearches.contains(where: { $0.id == selectedID }) {
+                        navigationTarget = .allAssets
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.statusMessage = error.localizedDescription
+            }
+        }
+
+        smartCollectionObservationTask = Task { [weak self] in
+            do {
+                for try await observedSmartCollections in smartCollectionRepository.observeSmartCollections() {
+                    guard let self, !Task.isCancelled else { return }
+                    smartCollections = observedSmartCollections
+                    if case let .smartCollection(selectedID) = navigationTarget,
+                       !observedSmartCollections.contains(where: { $0.id == selectedID }) {
+                        navigationTarget = .allAssets
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.statusMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func saveCurrentSearch() async {
+        guard let repository = container.savedSearchRepository else { return }
+        do {
+            _ = try await repository.createSavedSearch(
+                named: nextAvailableName(base: "Saved Search", existingNames: savedSearches.map(\.name)),
+                query: assetQuery
+            )
+            savedSearches = try await repository.savedSearches()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func createSmartCollectionFromCurrentQuery() async {
+        guard let repository = container.smartCollectionRepository else { return }
+        do {
+            let smartCollection = try await repository.createSmartCollection(
+                named: nextAvailableName(base: "Smart Collection", existingNames: smartCollections.map(\.name)),
+                query: assetQuery
+            )
+            smartCollections = try await repository.smartCollections()
+            navigationTarget = .smartCollection(smartCollection.id)
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func applySmartCollection(_ smartCollection: SmartCollection) {
+        searchText = smartCollection.query.criteria.text ?? ""
+        navigationTarget = .smartCollection(smartCollection.id)
+    }
+
+    func applySavedSearch(_ savedSearch: SavedSearch) {
+        searchText = savedSearch.query.criteria.text ?? ""
+        navigationTarget = .savedSearch(savedSearch.id)
+    }
+
+    func updateSearchCriteria(_ criteria: AssetSearchCriteria) {
+        searchText = criteria.text ?? ""
+        assetQuery.criteria = criteria
+        restartAssetObservation()
+    }
+
+    func renameSavedSearch(_ savedSearchID: SavedSearchID, to proposedName: String) async {
+        guard let repository = container.savedSearchRepository else { return }
+        do {
+            try await repository.renameSavedSearch(savedSearchID, to: proposedName)
+            savedSearches = try await repository.savedSearches()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func deleteSavedSearch(_ savedSearchID: SavedSearchID) async {
+        guard let repository = container.savedSearchRepository else { return }
+        do {
+            try await repository.deleteSavedSearch(savedSearchID)
+            savedSearches = try await repository.savedSearches()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func renameSmartCollection(_ smartCollectionID: SmartCollectionID, to proposedName: String) async {
+        guard let repository = container.smartCollectionRepository else { return }
+        do {
+            try await repository.renameSmartCollection(smartCollectionID, to: proposedName)
+            smartCollections = try await repository.smartCollections()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func deleteSmartCollection(_ smartCollectionID: SmartCollectionID) async {
+        guard let repository = container.smartCollectionRepository else { return }
+        do {
+            try await repository.deleteSmartCollection(smartCollectionID)
+            smartCollections = try await repository.smartCollections()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func createAlbum() async {
+        guard let repository = container.albumRepository else { return }
+        do {
+            let album = try await repository.createAlbum(named: nextAvailableAlbumName())
+            albums = try await repository.albums()
+            navigationTarget = .album(album.id)
+            recordAction(named: "Create Album", undo: .deleteAlbum(album.id))
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func createTag() async {
+        guard let repository = container.tagRepository else { return }
+        do {
+            let tag = try await repository.createTag(named: nextAvailableTagName())
+            tags = try await repository.tags()
+            recordAction(named: "Create Tag", undo: .deleteTag(tag.id))
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func renameAlbum(_ albumID: AlbumID, to proposedName: String) async {
+        guard let previousName = albums.first(where: { $0.id == albumID })?.name,
+              let repository = container.albumRepository else { return }
+        do {
+            guard proposedName != previousName else { return }
+            try await repository.renameAlbum(albumID, to: proposedName)
+            albums = try await repository.albums()
+            recordAction(named: "Rename Album", undo: .renameAlbum(albumID, to: previousName))
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func deleteAlbum(_ albumID: AlbumID) async {
+        guard let repository = container.albumRepository else { return }
+        do {
+            let receipt = try await repository.deleteAlbum(albumID)
+            albums = try await repository.albums()
+            if case let .album(selectedID) = navigationTarget, selectedID == albumID {
+                navigationTarget = .allAssets
+            }
+            recordAction(named: "Delete Album", undo: .restoreAlbum(receipt))
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func moveAlbum(_ albumID: AlbumID, earlier: Bool) async {
+        guard let repository = container.albumRepository,
+              let index = albums.firstIndex(where: { $0.id == albumID }) else { return }
+        let destinationIndex = earlier ? index - 1 : index + 1
+        guard albums.indices.contains(destinationIndex) else { return }
+
+        let priorOrder = albums.map(\.id)
+        var reordered = albums
+        reordered.swapAt(index, destinationIndex)
+        do {
+            try await repository.reorderAlbums(reordered.map(\.id))
+            albums = try await repository.albums()
+            recordAction(named: "Reorder Albums", undo: .reorderAlbums(priorOrder))
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func renameTag(_ tagID: TagID, to proposedName: String) async {
+        guard let previousName = tags.first(where: { $0.id == tagID })?.name,
+              let repository = container.tagRepository else { return }
+        do {
+            guard proposedName != previousName else { return }
+            try await repository.renameTag(tagID, to: proposedName)
+            tags = try await repository.tags()
+            recordAction(named: "Rename Tag", undo: .renameTag(tagID, to: previousName))
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func deleteTag(_ tagID: TagID) async {
+        guard let repository = container.tagRepository else { return }
+        do {
+            let receipt = try await repository.deleteTag(tagID)
+            tags = try await repository.tags()
+            if case let .tag(selectedID) = navigationTarget, selectedID == tagID {
+                navigationTarget = .allAssets
+            }
+            recordAction(named: "Delete Tag", undo: .restoreTag(receipt))
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func addTag(_ tagID: TagID) async {
+        guard !selectedAssetIDs.isEmpty, let repository = container.tagRepository else { return }
+        do {
+            try await repository.addTags([tagID], to: selectedAssetIDs)
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func removeTag(_ tagID: TagID) async {
+        guard !selectedAssetIDs.isEmpty, let repository = container.tagRepository else { return }
+        do {
+            try await repository.removeTags([tagID], from: selectedAssetIDs)
+        } catch {
+            statusMessage = error.localizedDescription
+        }
     }
 
     func createFolder(in parentFolderID: FolderID?) async {
@@ -426,7 +829,7 @@ final class LibraryWindowModel {
                 expandedFolderIDs.insert(parentFolderID)
             }
             navigationTarget = .folder(folder.id)
-            recordFolderAction(named: "Create Folder", undo: .delete(folder.id))
+            recordAction(named: "Create Folder", undo: .deleteFolder(folder.id))
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -442,7 +845,7 @@ final class LibraryWindowModel {
             guard let repository = container.folderRepository else { return }
             try await repository.renameFolder(folderID, to: name)
             try await refreshFolderSnapshot(using: repository)
-            recordFolderAction(named: "Rename Folder", undo: .rename(folderID, to: previousName))
+            recordAction(named: "Rename Folder", undo: .renameFolder(folderID, to: previousName))
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -459,7 +862,7 @@ final class LibraryWindowModel {
             if let parentFolderID {
                 expandedFolderIDs.insert(parentFolderID)
             }
-            recordFolderAction(named: "Move Folder", undo: .reparent(folderID, to: priorParentID))
+            recordAction(named: "Move Folder", undo: .reparentFolder(folderID, to: priorParentID))
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -503,7 +906,7 @@ final class LibraryWindowModel {
                receipt.deletedFolders.contains(where: { $0.id == selectedID }) {
                 navigationTarget = .inbox
             }
-            recordFolderAction(named: "Delete Folder", undo: .restore(receipt))
+            recordAction(named: "Delete Folder", undo: .restoreFolder(receipt))
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -617,6 +1020,7 @@ final class LibraryWindowModel {
         }
         inspectorPreviewRequestID = nil
         selectedAssets = []
+        trashEntriesByAssetID = [:]
         inspectorSelectionIsLimited = selectedAssetIDs.count > 500
         inspectorPreviewState = nil
         guard !selectedAssetIDs.isEmpty, !inspectorSelectionIsLimited else { return }
@@ -635,6 +1039,13 @@ final class LibraryWindowModel {
             let assets = try await repository.assets(ids: selection)
             guard selection == selectedAssetIDs else { return }
             selectedAssets = assets.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+            if navigationTarget == .trash {
+                trashEntriesByAssetID = Dictionary(
+                    uniqueKeysWithValues: try await repository.trashEntries(assetIDs: selection).map { ($0.assetID, $0) }
+                )
+            } else {
+                trashEntriesByAssetID = [:]
+            }
             if assets.count == 1, let asset = assets.first {
                 requestInspectorPreview(for: asset)
             } else {
@@ -692,6 +1103,25 @@ final class LibraryWindowModel {
         return try FolderName(candidate)
     }
 
+    private func nextAvailableAlbumName() -> String {
+        nextAvailableName(base: "New Album", existingNames: albums.map(\.name))
+    }
+
+    private func nextAvailableTagName() -> String {
+        nextAvailableName(base: "New Tag", existingNames: tags.map(\.name))
+    }
+
+    private func nextAvailableName(base: String, existingNames: [String]) -> String {
+        let existing = Set(existingNames.map { $0.lowercased() })
+        var candidate = base
+        var suffix = 2
+        while existing.contains(candidate.lowercased()) {
+            candidate = "\(base) \(suffix)"
+            suffix += 1
+        }
+        return candidate
+    }
+
     private func descendantFolderIDs(startingAt folderID: FolderID, in snapshot: FolderTreeSnapshot) -> [FolderID] {
         var result: [FolderID] = []
         var pending = [folderID]
@@ -702,28 +1132,30 @@ final class LibraryWindowModel {
         return result
     }
 
-    private func recordFolderAction(named actionName: String, undo action: FolderHistoryAction) {
-        undoHistory.append(FolderHistoryEntry(actionName: actionName, action: action))
+    private func recordAction(named actionName: String, undo action: LibraryHistoryAction) {
+        undoHistory.append(LibraryHistoryEntry(actionName: actionName, action: action))
         redoHistory.removeAll()
     }
 
-    private func performFolderHistoryAction(_ action: FolderHistoryAction) async throws -> FolderHistoryAction {
-        guard let repository = container.folderRepository else {
-            throw FolderHistoryError.folderUnavailable
-        }
-
+    private func performHistoryAction(_ action: LibraryHistoryAction) async throws -> LibraryHistoryAction {
         switch action {
-        case let .rename(folderID, name):
+        case let .renameFolder(folderID, name):
+            guard let repository = container.folderRepository else {
+                throw LibraryHistoryError.folderUnavailable
+            }
             guard let currentName = folderTreeSnapshot?.folders.first(where: { $0.id == folderID })?.name else {
-                throw FolderHistoryError.folderUnavailable
+                throw LibraryHistoryError.folderUnavailable
             }
             try await repository.renameFolder(folderID, to: name)
             try await refreshFolderSnapshot(using: repository)
-            return .rename(folderID, to: currentName)
+            return .renameFolder(folderID, to: currentName)
 
-        case let .reparent(folderID, parentFolderID):
+        case let .reparentFolder(folderID, parentFolderID):
+            guard let repository = container.folderRepository else {
+                throw LibraryHistoryError.folderUnavailable
+            }
             guard let currentFolder = folderTreeSnapshot?.folders.first(where: { $0.id == folderID }) else {
-                throw FolderHistoryError.folderUnavailable
+                throw LibraryHistoryError.folderUnavailable
             }
             let currentParentID = currentFolder.parentFolderID
             try await repository.reparentFolder(folderID, to: parentFolderID)
@@ -731,30 +1163,147 @@ final class LibraryWindowModel {
             if let parentFolderID {
                 expandedFolderIDs.insert(parentFolderID)
             }
-            return .reparent(folderID, to: currentParentID)
+            return .reparentFolder(folderID, to: currentParentID)
 
-        case let .delete(folderID):
+        case let .deleteFolder(folderID):
+            guard let repository = container.folderRepository else {
+                throw LibraryHistoryError.folderUnavailable
+            }
             let receipt = try await repository.deletePreservingAssets(folderID)
             try await refreshFolderSnapshot(using: repository)
             if case let .folder(selectedID) = navigationTarget,
                receipt.deletedFolders.contains(where: { $0.id == selectedID }) {
                 navigationTarget = .inbox
             }
-            return .restore(receipt)
+            return .restoreFolder(receipt)
 
-        case let .restore(receipt):
+        case let .restoreFolder(receipt):
+            guard let repository = container.folderRepository else {
+                throw LibraryHistoryError.folderUnavailable
+            }
             try await repository.restoreDeletedFolder(using: receipt)
             try await refreshFolderSnapshot(using: repository)
             guard let rootID = deletedRootID(in: receipt) else {
-                throw FolderHistoryError.folderUnavailable
+                throw LibraryHistoryError.folderUnavailable
             }
             navigationTarget = .folder(rootID)
-            return .delete(rootID)
+            return .deleteFolder(rootID)
+
+        case let .renameAlbum(albumID, name):
+            guard let repository = container.albumRepository,
+                  let currentName = albums.first(where: { $0.id == albumID })?.name else {
+                throw LibraryHistoryError.albumUnavailable
+            }
+            try await repository.renameAlbum(albumID, to: name)
+            albums = try await repository.albums()
+            return .renameAlbum(albumID, to: currentName)
+
+        case let .reorderAlbums(albumIDs):
+            guard let repository = container.albumRepository else {
+                throw LibraryHistoryError.albumUnavailable
+            }
+            let priorOrder = albums.map(\.id)
+            try await repository.reorderAlbums(albumIDs)
+            albums = try await repository.albums()
+            return .reorderAlbums(priorOrder)
+
+        case let .deleteAlbum(albumID):
+            guard let repository = container.albumRepository else {
+                throw LibraryHistoryError.albumUnavailable
+            }
+            let receipt = try await repository.deleteAlbum(albumID)
+            albums = try await repository.albums()
+            if case let .album(selectedID) = navigationTarget, selectedID == albumID {
+                navigationTarget = .allAssets
+            }
+            return .restoreAlbum(receipt)
+
+        case let .restoreAlbum(receipt):
+            guard let repository = container.albumRepository else {
+                throw LibraryHistoryError.albumUnavailable
+            }
+            try await repository.restoreDeletedAlbum(using: receipt)
+            albums = try await repository.albums()
+            navigationTarget = .album(receipt.album.id)
+            return .deleteAlbum(receipt.album.id)
+
+        case let .renameTag(tagID, name):
+            guard let repository = container.tagRepository,
+                  let currentName = tags.first(where: { $0.id == tagID })?.name else {
+                throw LibraryHistoryError.tagUnavailable
+            }
+            try await repository.renameTag(tagID, to: name)
+            tags = try await repository.tags()
+            return .renameTag(tagID, to: currentName)
+
+        case let .renameAsset(assetID, name):
+            guard let repository = container.assetRepository,
+                  let currentAsset = try await repository.asset(id: assetID) else {
+                throw LibraryHistoryError.folderUnavailable
+            }
+            try await repository.updateDisplayName(name, for: assetID)
+            await refreshInspectorNow()
+            return .renameAsset(assetID, to: currentAsset.displayName)
+
+        case let .restoreAssetLocations(receipt):
+            guard let repository = container.assetRepository else {
+                throw LibraryHistoryError.folderUnavailable
+            }
+            return .restoreAssetLocations(try await repository.restoreAssetLocations(using: receipt))
+
+        case let .deleteTag(tagID):
+            guard let repository = container.tagRepository else {
+                throw LibraryHistoryError.tagUnavailable
+            }
+            let receipt = try await repository.deleteTag(tagID)
+            tags = try await repository.tags()
+            if case let .tag(selectedID) = navigationTarget, selectedID == tagID {
+                navigationTarget = .allAssets
+            }
+            return .restoreTag(receipt)
+
+        case let .restoreTag(receipt):
+            guard let repository = container.tagRepository else {
+                throw LibraryHistoryError.tagUnavailable
+            }
+            try await repository.restoreDeletedTag(using: receipt)
+            tags = try await repository.tags()
+            navigationTarget = .tag(receipt.tag.id)
+            return .deleteTag(receipt.tag.id)
+
+        case let .restoreTrash(receipt):
+            guard let repository = container.assetRepository else {
+                throw LibraryHistoryError.folderUnavailable
+            }
+            try await repository.restoreFromTrash(using: receipt)
+            return .moveToTrash(Set(receipt.entries.map(\.assetID)))
+
+        case let .moveToTrash(assetIDs):
+            guard let repository = container.assetRepository else {
+                throw LibraryHistoryError.folderUnavailable
+            }
+            let receipt = try await repository.moveToTrash(assetIDs, retentionDays: 30)
+            return .restoreTrash(receipt)
         }
     }
 
     private func refreshFolderSnapshot(using repository: any FolderRepository) async throws {
         applyFolderSnapshot(try await repository.treeSnapshot())
+    }
+
+    private func queryForNavigationTarget() -> AssetQuery {
+        if case let .savedSearch(savedSearchID) = navigationTarget,
+           let savedSearch = savedSearches.first(where: { $0.id == savedSearchID }) {
+            return savedSearch.query
+        }
+        if case let .smartCollection(smartCollectionID) = navigationTarget,
+           let smartCollection = smartCollections.first(where: { $0.id == smartCollectionID }) {
+            return smartCollection.query
+        }
+        return AssetQuery(
+            scope: navigationTarget.assetScope,
+            criteria: AssetSearchCriteria(text: searchText)
+        )
     }
 
     private func deletedRootID(in receipt: FolderDeletionReceipt) -> FolderID? {
