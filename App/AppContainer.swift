@@ -1,7 +1,9 @@
 import FramebaseAPIClient
 import FramebaseCatalog
+import FramebaseCatalogSync
 import FramebaseDomain
 import FramebaseMedia
+import FramebaseSync
 import Foundation
 import Observation
 
@@ -57,11 +59,19 @@ final class AppContainer {
     @ObservationIgnored private(set) var assetBlobStore: (any AssetBlobStore)?
     @ObservationIgnored private(set) var importCoordinator: (any ImportCoordinator)?
     @ObservationIgnored private(set) var thumbnailProvider: (any ThumbnailProvider)?
+    @ObservationIgnored private(set) var librarySyncCoordinator: LibrarySyncCoordinator?
 
     let catalogSchemaVersion = FramebaseCatalogFoundation.initialSchemaVersion
     let thumbnailCacheFormatVersion = FramebaseMediaFoundation.thumbnailCacheFormatVersion
 
     private static let libraryRootPreferenceKey = "framebase.libraryRootPath"
+
+    /// Defaults to false and nothing shipped in this app writes it yet —
+    /// deliberately. Real catalog sync (`FramebaseCatalogSync`) is built and
+    /// proven against fixtures, but turning it on for a real library is a
+    /// separate, explicit decision, not a side effect of enrolling a device
+    /// to test the Cloud (Dev) Settings tab.
+    private static let cloudSyncEnabledPreferenceKey = "framebase.cloudSyncEnabled"
 
     init(preferences: UserDefaults = .standard) {
         self.preferences = preferences
@@ -213,6 +223,9 @@ final class AppContainer {
     }
 
     private func activateLibrary(_ layout: LibraryPackageLayout, persistSelection: Bool = true) async throws {
+        await librarySyncCoordinator?.stop()
+        librarySyncCoordinator = nil
+
         let catalog = try CatalogDatabase(catalogURL: layout.catalogDatabaseURL)
         let blobStore = try ManagedAssetBlobStore(
             originalsDirectoryURL: layout.originalsDirectoryURL,
@@ -224,8 +237,6 @@ final class AppContainer {
         }
 
         catalogDatabase = catalog
-        assetRepository = catalog.assets
-        folderRepository = catalog.folders
         albumRepository = catalog.albums
         assetBlobStore = blobStore
         importCoordinator = ManagedImportCoordinator(
@@ -243,7 +254,44 @@ final class AppContainer {
         if persistSelection {
             preferences.set(layout.rootURL.path, forKey: Self.libraryRootPreferenceKey)
         }
+
+        try await activateCatalogSync(for: catalog, layout: layout)
+
         libraryState = .ready(catalog.catalogID)
+    }
+
+    /// Wires real catalog sync only when both are true: `cloudSyncEnabled`
+    /// (nothing shipped sets it yet) and a live, unexpired device
+    /// enrollment. Otherwise `assetRepository`/`folderRepository` stay the
+    /// plain, non-syncing repositories exactly as before this existed.
+    private func activateCatalogSync(for catalog: CatalogDatabase, layout: LibraryPackageLayout) async throws {
+        guard preferences.bool(forKey: Self.cloudSyncEnabledPreferenceKey),
+              let credential = try? await cloudCredentialStore.currentCredential(),
+              !credential.isExpired() else {
+            assetRepository = catalog.assets
+            folderRepository = catalog.folders
+            return
+        }
+
+        let syncState = try SyncStateStore(databaseURL: layout.syncDatabaseURL)
+        let recorder = CatalogOutboxRecorder(outbox: syncState, actorID: credential.deviceId)
+
+        assetRepository = SyncingAssetRepository(wrapping: catalog.assets, recorder: recorder)
+        folderRepository = SyncingFolderRepository(wrapping: catalog.folders, recorder: recorder)
+
+        // The applier uses the raw repositories, never the syncing
+        // decorators above — applying a pulled change through the decorator
+        // would re-record it into the outbox and push it straight back.
+        let applier = CatalogChangeApplier(folders: catalog.folders, assets: catalog.assets, ownActorID: credential.deviceId)
+        let engine = DefaultSyncEngine(
+            apiClient: apiClient,
+            outbox: syncState,
+            cursorStore: syncState,
+            changeApplier: applier
+        )
+        let coordinator = LibrarySyncCoordinator(engine: engine)
+        await coordinator.start()
+        librarySyncCoordinator = coordinator
     }
 
     private static func thumbnailCacheDirectoryURL() throws -> URL {

@@ -23,6 +23,7 @@
 		A1000000000000000000000E /* FramebaseMedia in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000003 /* FramebaseMedia */; };
 		A10000000000000000000012 /* FramebaseAPIClient in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000004 /* FramebaseAPIClient */; };
 		A10000000000000000000013 /* FramebaseSync in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000005 /* FramebaseSync */; };
+		A10000000000000000000014 /* FramebaseCatalogSync in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000006 /* FramebaseCatalogSync */; };
 		A1000000000000000000000F /* LibraryPackageCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* LibraryPackageCoordinator.swift */; };
 		A10000000000000000000010 /* LibraryPanelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* LibraryPanelService.swift */; };
 		A10000000000000000000011 /* LibrarySetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* LibrarySetupView.swift */; };
@@ -67,6 +68,7 @@
 				A1000000000000000000000E /* FramebaseMedia in Frameworks */,
 				A10000000000000000000012 /* FramebaseAPIClient in Frameworks */,
 				A10000000000000000000013 /* FramebaseSync in Frameworks */,
+				A10000000000000000000014 /* FramebaseCatalogSync in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -204,6 +206,7 @@
 				AA0000000000000000000003 /* FramebaseMedia */,
 				AA0000000000000000000004 /* FramebaseAPIClient */,
 				AA0000000000000000000005 /* FramebaseSync */,
+				AA0000000000000000000006 /* FramebaseCatalogSync */,
 			);
 			productName = Framebase;
 			productReference = A2000000000000000000000C /* Framebase.app */;
@@ -512,6 +515,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AD0000000000000000000001 /* XCLocalSwiftPackageReference "Packages/FramebaseKit" */;
 			productName = FramebaseSync;
+		};
+		AA0000000000000000000006 /* FramebaseCatalogSync */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD0000000000000000000001 /* XCLocalSwiftPackageReference "Packages/FramebaseKit" */;
+			productName = FramebaseCatalogSync;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

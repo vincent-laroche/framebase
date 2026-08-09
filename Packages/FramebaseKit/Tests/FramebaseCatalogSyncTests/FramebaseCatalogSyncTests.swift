@@ -75,7 +75,7 @@ struct CatalogChangeApplierTests {
     @Test("create_folder creates a folder under the exact ID the event names")
     func createFolderAppliesWithExactID() async throws {
         let temporary = try TemporaryCatalog()
-        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets)
+        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets, ownActorID: "device-under-test")
         let folderID = FolderID()
 
         try await applier.apply(changeEvent(
@@ -95,7 +95,7 @@ struct CatalogChangeApplierTests {
     @Test("create_folder under a parent nests correctly")
     func createFolderAppliesUnderParent() async throws {
         let temporary = try TemporaryCatalog()
-        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets)
+        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets, ownActorID: "device-under-test")
         let parentID = try await temporary.database.folders.createFolder(named: FolderName("Trips"), in: nil).id
         let childID = FolderID()
 
@@ -116,7 +116,7 @@ struct CatalogChangeApplierTests {
     func renameFolderApplies() async throws {
         let temporary = try TemporaryCatalog()
         let folder = try await temporary.database.folders.createFolder(named: FolderName("Old Name"), in: nil)
-        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets)
+        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets, ownActorID: "device-under-test")
 
         try await applier.apply(changeEvent(
             revision: 3,
@@ -136,7 +136,7 @@ struct CatalogChangeApplierTests {
         let folder = try await temporary.database.folders.createFolder(named: FolderName("Photos"), in: nil)
         let asset = try FixtureFactory.asset(parentFolderID: folder.id)
         try await temporary.database.insertAsset(asset)
-        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets)
+        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets, ownActorID: "device-under-test")
 
         try await applier.apply(changeEvent(
             revision: 4,
@@ -165,7 +165,7 @@ struct CatalogChangeApplierTests {
         let targetFolder = try await temporary.database.folders.createFolder(named: FolderName("Target"), in: nil)
         let asset = try FixtureFactory.asset(parentFolderID: sourceFolder.id)
         try await temporary.database.insertAsset(asset)
-        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets)
+        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets, ownActorID: "device-under-test")
 
         try await applier.apply(changeEvent(
             revision: 6,
@@ -182,7 +182,7 @@ struct CatalogChangeApplierTests {
     @Test("An unrecognized operation is ignored rather than thrown")
     func unknownOperationIsIgnored() async throws {
         let temporary = try TemporaryCatalog()
-        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets)
+        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets, ownActorID: "device-under-test")
 
         try await applier.apply(changeEvent(
             revision: 7,
@@ -196,7 +196,7 @@ struct CatalogChangeApplierTests {
     @Test("A malformed payload throws a typed error instead of crashing")
     func malformedPayloadThrows() async throws {
         let temporary = try TemporaryCatalog()
-        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets)
+        let applier = CatalogChangeApplier(folders: temporary.database.folders, assets: temporary.database.assets, ownActorID: "device-under-test")
 
         await #expect(throws: CatalogChangeApplierError.missingPayloadField("name")) {
             try await applier.apply(changeEvent(
@@ -285,7 +285,7 @@ struct SyncingRepositoryTests {
         }
 
         let targetCatalog = try TemporaryCatalog()
-        let applier = CatalogChangeApplier(folders: targetCatalog.database.folders, assets: targetCatalog.database.assets)
+        let applier = CatalogChangeApplier(folders: targetCatalog.database.folders, assets: targetCatalog.database.assets, ownActorID: "device-under-test")
         for event in events {
             try await applier.apply(event)
         }

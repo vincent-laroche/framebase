@@ -15,16 +15,28 @@ public enum CatalogChangeApplierError: Error, Equatable, Sendable {
 /// `mutations.ts` accepts — and ignores anything else, since this is a
 /// change *consumer*, not a validator: a future server-side operation type
 /// should be silently skipped by older clients, not crash them.
+///
+/// Skips events authored by `ownActorID`. The change feed is one shared log
+/// — a device's own pushed mutations come back on its next pull just like
+/// anyone else's — and reapplying a create/rename/rating change the device
+/// itself already applied locally either double-creates it (a `create_folder`
+/// UNIQUE-constraint failure, found via this session's live round trip) or
+/// is at best a wasted no-op. `DefaultSyncEngine` doesn't know about actor
+/// identity, so this is the applier's responsibility, not the engine's.
 public struct CatalogChangeApplier: ChangeApplier {
     private let folders: any FolderRepository
     private let assets: any AssetRepository
+    private let ownActorID: String
 
-    public init(folders: any FolderRepository, assets: any AssetRepository) {
+    public init(folders: any FolderRepository, assets: any AssetRepository, ownActorID: String) {
         self.folders = folders
         self.assets = assets
+        self.ownActorID = ownActorID
     }
 
     public func apply(_ event: ChangeEvent) async throws {
+        guard event.actorId != ownActorID else { return }
+
         switch event.operation {
         case "create_folder":
             try await applyCreateFolder(event)

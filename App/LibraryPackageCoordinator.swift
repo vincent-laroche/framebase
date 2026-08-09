@@ -54,6 +54,14 @@ struct LibraryPackageLayout: Equatable, Sendable {
         rootURL.appendingPathComponent("Staging", isDirectory: true)
     }
 
+    var syncDirectoryURL: URL {
+        rootURL.appendingPathComponent("Sync", isDirectory: true)
+    }
+
+    var syncDatabaseURL: URL {
+        syncDirectoryURL.appendingPathComponent("sync.sqlite", isDirectory: false)
+    }
+
     static func defaultRootURL(fileManager: FileManager = .default) throws -> URL {
         guard let picturesURL = fileManager.urls(for: .picturesDirectory, in: .userDomainMask).first else {
             throw CocoaError(.fileNoSuchFile)
@@ -110,7 +118,13 @@ actor LibraryPackageCoordinator {
     }
 
     private func prepareDirectories(for layout: LibraryPackageLayout) throws {
-        for directoryURL in [layout.rootURL, layout.catalogDirectoryURL, layout.originalsDirectoryURL, layout.stagingDirectoryURL] {
+        for directoryURL in [
+            layout.rootURL,
+            layout.catalogDirectoryURL,
+            layout.originalsDirectoryURL,
+            layout.stagingDirectoryURL,
+            layout.syncDirectoryURL
+        ] {
             try prepareManagedDirectory(at: directoryURL)
         }
 
