@@ -234,16 +234,15 @@ final class FramebaseUITests: XCTestCase {
         cell.click()
         XCTAssertTrue(app.buttons["inspector.analyzeLocally"].waitForExistence(timeout: 10))
         let foldersBeforeAnalysis = userFolderNames(at: rootURL)
+        let assetOrganizationBeforeAnalysis = assetOrganizationSnapshot(at: rootURL)
 
         app.buttons["inspector.analyzeLocally"].click()
-        let completionAlert = app.alerts.firstMatch
-        XCTAssertTrue(completionAlert.waitForExistence(timeout: 30))
-        completionAlert.buttons["OK"].click()
         XCTAssertTrue(
-            app.descendants(matching: .any)["analysis.provenance"].waitForExistence(timeout: 10),
+            app.descendants(matching: .any)["analysis.provenance"].waitForExistence(timeout: 30),
             "The completed analysis did not show result provenance."
         )
         XCTAssertEqual(userFolderNames(at: rootURL), foldersBeforeAnalysis)
+        XCTAssertEqual(assetOrganizationSnapshot(at: rootURL), assetOrganizationBeforeAnalysis)
     }
 
     @MainActor
@@ -494,6 +493,47 @@ final class FramebaseUITests: XCTestCase {
             names.append(String(cString: text))
         }
         return names
+    }
+
+    /// Reads the catalog directly so this test proves local analysis cannot
+    /// alter the selected asset's folder, name, favorite/rating, tag set, or
+    /// album membership. It intentionally excludes analysis tables.
+    private func assetOrganizationSnapshot(at rootURL: URL) -> [String]? {
+        let catalogURL = rootURL
+            .appendingPathComponent("Catalog", isDirectory: true)
+            .appendingPathComponent("catalog.sqlite", isDirectory: false)
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(catalogURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+              let database else {
+            return nil
+        }
+        defer { sqlite3_close(database) }
+
+        let sql = """
+            SELECT a.id || '|' || a.display_name || '|' || a.parent_folder_id || '|' ||
+                   a.favorite || '|' || a.rating || '|' ||
+                   COALESCE((SELECT group_concat(tag_id, ',') FROM (
+                       SELECT tag_id FROM asset_tags WHERE asset_id = a.id ORDER BY tag_id
+                   )), '') || '|' ||
+                   COALESCE((SELECT group_concat(album_id, ',') FROM (
+                       SELECT album_id FROM album_assets WHERE asset_id = a.id ORDER BY album_id
+                   )), '')
+            FROM assets a
+            ORDER BY a.id
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            return nil
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var rows: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let text = sqlite3_column_text(statement, 0) else { return nil }
+            rows.append(String(cString: text))
+        }
+        return rows
     }
 
 }

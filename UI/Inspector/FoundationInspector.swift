@@ -345,11 +345,16 @@ struct FoundationInspector: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-        case let .barcode(count):
+        case let .barcode(count, observations):
             LabeledContent("Barcodes", value: count.formatted())
+            ForEach(Array(observations.prefix(5).enumerated()), id: \.offset) { _, observation in
+                Text("\(observation.symbology): \(observation.payload ?? "Unreadable payload")")
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
         case let .document(confidence):
             LabeledContent("Document confidence", value: confidence.formatted(.percent.precision(.fractionLength(0))))
-        case let .faceRegions(count):
+        case let .faceRegions(count, _):
             LabeledContent("Anonymous face regions", value: count.formatted())
         }
     }

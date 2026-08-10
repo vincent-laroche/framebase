@@ -158,7 +158,7 @@ Run: swift test --package-path Packages/FramebaseKit --filter VisionIntelligence
 
 Expected: compile failure because the provider is absent.
 
-- [ ] **Step 3: Implement the bounded derivative and requests**
+- [x] **Step 3: Implement the bounded derivative and requests**
 
 Generate a maximum 1600-pixel ImageIO derivative, hash it, and discard transient bytes after processing. Execute VNRecognizeTextRequest, VNDetectBarcodesRequest, document detection where supported, and VNDetectFaceRectanglesRequest. Capture actual request revision/language configuration. Run off the main actor and honor cancellation between requests.
 
@@ -207,7 +207,7 @@ Expected: controls are absent.
 
 Add per-asset and bounded multi-select Analyze actions. Show queued/running/succeeded/failed/stale status, engine/revision/derivative/confidence, and copyable OCR text. Add an OCR filter to browser search with result provenance. Do not add person names, semantic-result claims, or Apply Tags/Move actions.
 
-- [ ] **Step 4: Verify UI and app**
+- [x] **Step 4: Verify UI and app**
 
 Run: xcodebuild -project Framebase.xcodeproj -scheme Framebase -destination 'platform=macOS' test -only-testing:FramebaseUITests/IntelligenceUITests
 

@@ -30,11 +30,35 @@ public actor VisionIntelligenceService: IntelligenceService {
             case .barcode:
                 let visionRequest = VNDetectBarcodesRequest()
                 try handler.perform([visionRequest])
-                results.append(try result(assetID: request.assetID, kind: .barcode, derivative: derivative, revision: visionRequest.revision, locales: [], payload: .barcode(count: visionRequest.results?.count ?? 0)))
+                let observations = try (visionRequest.results ?? []).map { observation in
+                    try BarcodeObservation(
+                        symbology: observation.symbology.rawValue,
+                        payload: observation.payloadStringValue,
+                        confidence: Double(observation.confidence),
+                        boundingBox: try NormalizedBoundingBox(
+                            x: observation.boundingBox.origin.x,
+                            y: observation.boundingBox.origin.y,
+                            width: observation.boundingBox.size.width,
+                            height: observation.boundingBox.size.height
+                        )
+                    )
+                }
+                results.append(try result(assetID: request.assetID, kind: .barcode, derivative: derivative, revision: visionRequest.revision, locales: [], payload: .barcode(count: observations.count, observations: observations)))
             case .faceRegions:
                 let visionRequest = VNDetectFaceRectanglesRequest()
                 try handler.perform([visionRequest])
-                results.append(try result(assetID: request.assetID, kind: .faceRegions, derivative: derivative, revision: visionRequest.revision, locales: [], payload: .faceRegions(count: visionRequest.results?.count ?? 0)))
+                let regions = try (visionRequest.results ?? []).map { observation in
+                    try FaceRegion(
+                        boundingBox: try NormalizedBoundingBox(
+                            x: observation.boundingBox.origin.x,
+                            y: observation.boundingBox.origin.y,
+                            width: observation.boundingBox.size.width,
+                            height: observation.boundingBox.size.height
+                        ),
+                        confidence: Double(observation.confidence)
+                    )
+                }
+                results.append(try result(assetID: request.assetID, kind: .faceRegions, derivative: derivative, revision: visionRequest.revision, locales: [], payload: .faceRegions(count: regions.count, regions: regions)))
             case .document:
                 let visionRequest = VNDetectDocumentSegmentationRequest()
                 try handler.perform([visionRequest])

@@ -9,6 +9,7 @@ public enum IntelligenceValidationError: Error, Equatable, Sendable {
     case invalidDerivativeDimension
     case invalidLocale
     case invalidConfidence
+    case invalidBarcodeSymbology
     case emptyRecognizedText
     case invalidBoundingBox
     case payloadKindMismatch
@@ -122,13 +123,56 @@ public struct OCRLine: Codable, Hashable, Sendable {
     }
 }
 
+/// Private local barcode metadata. It is intentionally excluded from logs,
+/// diagnostics, browser APIs, and error descriptions.
+public struct BarcodeObservation: Codable, Hashable, Sendable {
+    public let symbology: String
+    public let payload: String?
+    public let confidence: Double
+    public let boundingBox: NormalizedBoundingBox
+
+    public init(
+        symbology: String,
+        payload: String?,
+        confidence: Double,
+        boundingBox: NormalizedBoundingBox
+    ) throws {
+        let normalizedSymbology = symbology.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSymbology.isEmpty else { throw IntelligenceValidationError.invalidBarcodeSymbology }
+        guard (0...1).contains(confidence) else { throw IntelligenceValidationError.invalidConfidence }
+        self.symbology = normalizedSymbology
+        let normalizedPayload = payload?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.payload = normalizedPayload.isEmpty ? nil : normalizedPayload
+        self.confidence = confidence
+        self.boundingBox = boundingBox
+    }
+}
+
+/// A face rectangle without a name, biometric identifier, or grouping key.
+public struct FaceRegion: Codable, Hashable, Sendable {
+    public let boundingBox: NormalizedBoundingBox
+    public let confidence: Double
+
+    public init(boundingBox: NormalizedBoundingBox, confidence: Double) throws {
+        guard (0...1).contains(confidence) else { throw IntelligenceValidationError.invalidConfidence }
+        self.boundingBox = boundingBox
+        self.confidence = confidence
+    }
+}
+
 public enum AnalysisPayload: Codable, Hashable, Sendable {
     case ocr([OCRLine])
-    case barcode(count: Int)
+    /// `count` preserves compatibility with the initial local schema, whose
+    /// barcode records carried a count but no observation detail.
+    case barcode(count: Int, observations: [BarcodeObservation])
     case document(confidence: Double)
-    case faceRegions(count: Int)
+    /// `count` preserves compatibility with the initial local schema, whose
+    /// anonymous face records carried a count but no rectangle detail.
+    case faceRegions(count: Int, regions: [FaceRegion])
 
-    private enum CodingKeys: String, CodingKey { case kind, ocrLines, count, confidence }
+    private enum CodingKeys: String, CodingKey {
+        case kind, ocrLines, count, confidence, barcodeObservations, faceRegions
+    }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -136,11 +180,13 @@ public enum AnalysisPayload: Codable, Hashable, Sendable {
         case .ocr:
             self = .ocr(try container.decode([OCRLine].self, forKey: .ocrLines))
         case .barcode:
-            self = .barcode(count: try container.decode(Int.self, forKey: .count))
+            let observations = try container.decodeIfPresent([BarcodeObservation].self, forKey: .barcodeObservations) ?? []
+            self = .barcode(count: try container.decodeIfPresent(Int.self, forKey: .count) ?? observations.count, observations: observations)
         case .document:
             self = .document(confidence: try container.decode(Double.self, forKey: .confidence))
         case .faceRegions:
-            self = .faceRegions(count: try container.decode(Int.self, forKey: .count))
+            let regions = try container.decodeIfPresent([FaceRegion].self, forKey: .faceRegions) ?? []
+            self = .faceRegions(count: try container.decodeIfPresent(Int.self, forKey: .count) ?? regions.count, regions: regions)
         }
     }
 
@@ -150,15 +196,17 @@ public enum AnalysisPayload: Codable, Hashable, Sendable {
         case let .ocr(lines):
             try container.encode(AnalysisKind.ocr, forKey: .kind)
             try container.encode(lines, forKey: .ocrLines)
-        case let .barcode(count):
+        case let .barcode(count, observations):
             try container.encode(AnalysisKind.barcode, forKey: .kind)
             try container.encode(count, forKey: .count)
+            try container.encode(observations, forKey: .barcodeObservations)
         case let .document(confidence):
             try container.encode(AnalysisKind.document, forKey: .kind)
             try container.encode(confidence, forKey: .confidence)
-        case let .faceRegions(count):
+        case let .faceRegions(count, regions):
             try container.encode(AnalysisKind.faceRegions, forKey: .kind)
             try container.encode(count, forKey: .count)
+            try container.encode(regions, forKey: .faceRegions)
         }
     }
 

@@ -49,4 +49,38 @@ struct IntelligenceModelTests {
 
         #expect(!result.description.contains("PRIVATE OCR CONTENT"))
     }
+
+    @Test("Barcode details and anonymous face geometry round-trip without identity data")
+    func barcodeAndFacePayloadRoundTrip() throws {
+        let barcode = try BarcodeObservation(
+            symbology: "QR",
+            payload: "PRIVATE-BARCODE",
+            confidence: 0.9,
+            boundingBox: .fullImage
+        )
+        let face = try FaceRegion(boundingBox: .fullImage, confidence: 0.8)
+        let payloads: [AnalysisPayload] = [
+            .barcode(count: 1, observations: [barcode]),
+            .faceRegions(count: 1, regions: [face])
+        ]
+
+        for payload in payloads {
+            #expect(try JSONDecoder().decode(AnalysisPayload.self, from: JSONEncoder().encode(payload)) == payload)
+        }
+    }
+
+    @Test("Initial count-only payloads remain readable")
+    func legacyCountOnlyPayloadsRemainReadable() throws {
+        let barcode = try JSONDecoder().decode(
+            AnalysisPayload.self,
+            from: Data(#"{"kind":"barcode","count":2}"#.utf8)
+        )
+        let faces = try JSONDecoder().decode(
+            AnalysisPayload.self,
+            from: Data(#"{"kind":"faceRegions","count":3}"#.utf8)
+        )
+
+        #expect(barcode == .barcode(count: 2, observations: []))
+        #expect(faces == .faceRegions(count: 3, regions: []))
+    }
 }
