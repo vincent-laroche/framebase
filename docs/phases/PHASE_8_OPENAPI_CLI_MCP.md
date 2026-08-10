@@ -51,14 +51,14 @@
 **Current source-only implementation (2026-08-10):** migration `0007_agent_operations.sql` and the `agents` Worker route implement the first narrow remote adapter without deploying it. A trusted device can mint a one-time returned, SHA-256-hashed delegated credential whose scopes are a subset of its own; only that device can revoke it. An active agent with `assets.metadata.write` can propose adding an existing tag to up to 500 active assets at an exact catalog revision. The owner device issues a 15-minute opaque approval only if the full target/tag/membership snapshot is unchanged. The same shared idempotent mutation executor used by `/v1/mutations` then adds only previously missing memberships and preserves any pre-existing membership. Every identity/proposal/approval/apply/expiry/stale event is attributed. No migration has been applied, identity created, endpoint deployed, MCP server hosted, cloud credential emitted, or personal media touched.
 
 - [ ] Map the remaining approved OpenAPI operations to scope-enforced Worker handlers and operation records. The initial `addTags` proposal/apply route is source-complete and terminal-tested; it is not deployed.
-- [x] Create a separate scoped, local-catalog agent identity/revocation model without exposing infrastructure credentials. Remote identity authentication remains deferred to its separately approved adapter.
-- [ ] Implement MCP tools as thin wrappers; do not duplicate workflow or mutation logic.
+- [x] Create a separate scoped, local-catalog agent identity/revocation model without exposing infrastructure credentials. The source-only remote adapter mirrors this with one-way credential hashes and owner-device revocation; no remote identity has been created or deployed.
+- [x] Implement source-only local stdio MCP tools as thin wrappers in `Cloud/apps/mcp/`; they proxy only `framebase_propose_tag`, `framebase_get_operation`, and `framebase_apply_tag_proposal` to the scoped HTTP adapter. They have no database/R2/UI-automation/credential-creation/purge/model surface and remain unhosted.
 - [ ] Prove scope denial, revocation, proposal expiry, audit attribution, and CLI/MCP parity.
 - [ ] Obtain explicit approval before remote identities, credentials, endpoint deployment, or MCP hosting.
 
 ## Exit Checklist
 
-- [ ] CLI and MCP fixtures produce the same domain outcomes as the Mac use cases.
+- [ ] CLI and MCP fixtures produce the same domain outcomes as the Mac use cases. The MCP proxy's HTTP mapping is tested, but full app/CLI/MCP parity still awaits deployment-independent shared fixtures.
 - [ ] Bulk mutation remains proposal-first and approval-bound.
 - [x] Scope/revocation tests deny out-of-policy local CLI access.
 - [x] Every local CLI mutation is attributed and queryable in audit history.
