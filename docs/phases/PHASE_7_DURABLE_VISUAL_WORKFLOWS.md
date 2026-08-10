@@ -51,9 +51,9 @@
 ## Task 4: Add a Mac-first preview and approval UI
 
 - [x] Provide a terminal-tested local tag workflow: its preview states the exact action, selected-asset count, catalog revision, drift stop, and required approval; it makes no organizational change until approved, then writes one append-only audit group.
-- [ ] Add explicit workflow preview and apply controls, showing exact target assets, operation count, drift warning, and reversible/irreversible classification.
+- [x] Add explicit workflow preview and apply controls, showing exact target assets, operation count, drift warning, and non-destructive/no-automatic-undo classification. A failed tag attempt stays visible and can only retry by creating a new exact preview; it may never resume a failed plan against changed catalog state.
 - [x] Add terminal-only UI tests proving a dry run changes no organization and an approved safe action produces one auditable group.
-- [ ] Add visible failure/retry state and an undo path where the domain operation is reversible.
+- [ ] Add an undo path when the domain operation records exact reversible deltas. The current tag action is deliberately classified as non-destructive but without automatic undo, because a safe inverse must not remove pre-existing tag membership.
 
 ## Task 5: Add cloud durability only after a separate resource approval
 

@@ -331,6 +331,7 @@ final class FramebaseUITests: XCTestCase {
         XCTAssertTrue(tagField.waitForExistence(timeout: 10))
         app.buttons["workflow.preview"].click()
         XCTAssertTrue(app.buttons["workflow.approveAndApply"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Exact targets"].waitForExistence(timeout: 10))
         XCTAssertEqual(assetOrganizationSnapshot(at: rootURL), beforePreview)
 
         app.buttons["workflow.approveAndApply"].click()

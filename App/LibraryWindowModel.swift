@@ -17,6 +17,7 @@ struct WorkflowTagPreview: Identifiable, Sendable {
     let workflowRunID: UUID
     let plan: WorkflowPlan
     let tagName: TagName
+    let targetAssetNames: [String]
 
     var id: UUID { workflowRunID }
 }
@@ -144,6 +145,7 @@ final class LibraryWindowModel {
     var savedSearches: [SavedSearch] = []
     var hairSolutionsTemplatePreview: LibraryTemplateApplicationPreview?
     var workflowTagPreview: WorkflowTagPreview?
+    var workflowTagFailureMessage: String?
     var pendingFolderDeletion: FolderDeletionPrompt?
     var isInspectorVisible = true
     var thumbnailSize: Double = 176 {
@@ -797,12 +799,18 @@ final class LibraryWindowModel {
     /// album, rating, favorite, Trash state, or managed original.
     func prepareTagWorkflow(named rawTagName: String) async {
         guard !selectedAssetIDs.isEmpty else { return }
-        guard !container.cloudBackingIsActive, let catalog = container.catalogDatabase else {
+        guard !container.cloudBackingIsActive,
+              let catalog = container.catalogDatabase,
+              let assetRepository = container.assetRepository else {
             statusMessage = "Workflow application is unavailable while cloud synchronization is active."
             return
         }
         do {
+            workflowTagFailureMessage = nil
             let tagName = try TagName(rawTagName)
+            let targetAssetNames = try await assetRepository.assets(ids: selectedAssetIDs)
+                .map(\.displayName)
+                .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
             let snapshot = try await catalog.workflowInputSnapshot(assetIDs: selectedAssetIDs)
             let definition = try WorkflowDefinition(
                 name: "Apply \(tagName.rawValue)",
@@ -812,14 +820,20 @@ final class LibraryWindowModel {
             let plan = try WorkflowPlanner().plan(definition: definition, snapshot: snapshot)
             try await catalog.workflows.store(definition, at: .now)
             let run = try await catalog.workflows.enqueue(plan: plan, actor: .human, at: .now)
-            workflowTagPreview = WorkflowTagPreview(workflowRunID: run.id, plan: plan, tagName: tagName)
+            workflowTagPreview = WorkflowTagPreview(
+                workflowRunID: run.id,
+                plan: plan,
+                tagName: tagName,
+                targetAssetNames: targetAssetNames
+            )
         } catch {
             statusMessage = error.localizedDescription
         }
     }
 
-    func approveAndApplyWorkflowTagPreview() async {
-        guard let preview = workflowTagPreview, let catalog = container.catalogDatabase else { return }
+    @discardableResult
+    func approveAndApplyWorkflowTagPreview() async -> Bool {
+        guard let preview = workflowTagPreview, let catalog = container.catalogDatabase else { return false }
         do {
             let currentSnapshot = try await catalog.workflowInputSnapshot(assetIDs: Set(preview.plan.snapshot.assetIDs))
             _ = try await catalog.workflows.approve(
@@ -835,16 +849,26 @@ final class LibraryWindowModel {
                 at: .now
             )
             workflowTagPreview = nil
+            workflowTagFailureMessage = nil
             await refreshInspectorNow()
             statusMessage = "Applied \(preview.tagName.rawValue) to \(preview.plan.snapshot.assetIDs.count) selected asset\(preview.plan.snapshot.assetIDs.count == 1 ? "" : "s") after reviewing the exact plan."
+            return true
         } catch {
-            workflowTagPreview = nil
-            statusMessage = error.localizedDescription
+            workflowTagFailureMessage = error.localizedDescription
+            return false
         }
+    }
+
+    func retryWorkflowTagPreview() async {
+        guard let preview = workflowTagPreview else { return }
+        workflowTagPreview = nil
+        workflowTagFailureMessage = nil
+        await prepareTagWorkflow(named: preview.tagName.rawValue)
     }
 
     func dismissWorkflowTagPreview() {
         workflowTagPreview = nil
+        workflowTagFailureMessage = nil
     }
 
     func libraryStateDidChange() {

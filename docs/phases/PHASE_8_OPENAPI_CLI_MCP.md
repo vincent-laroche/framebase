@@ -36,7 +36,7 @@
 
 - [x] Add preview-only scope, operation, request, and approval-token schemas to the versioned OpenAPI contract without claiming a new deployed route.
 - [x] Typecheck and contract-test the new preview schemas locally.
-- [ ] Add a compatibility test that rejects undocumented API routes and undocumented required fields.
+- [x] Add a compatibility test that rejects undocumented API routes, methods, and required fields; proposal/approval request schemas remain closed to undeclared fields.
 
 ## Task 3: Build the local `framebase` CLI
 

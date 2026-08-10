@@ -304,14 +304,19 @@ struct LibraryWindowView: View {
         .sheet(isPresented: $isWorkflowTagComposerPresented) {
             WorkflowTagReviewSheet(
                 preview: model.workflowTagPreview,
+                failureMessage: model.workflowTagFailureMessage,
                 buildPreview: { tagName in
                     Task { await model.prepareTagWorkflow(named: tagName) }
                 },
                 apply: {
                     Task {
-                        await model.approveAndApplyWorkflowTagPreview()
-                        isWorkflowTagComposerPresented = false
+                        if await model.approveAndApplyWorkflowTagPreview() {
+                            isWorkflowTagComposerPresented = false
+                        }
                     }
+                },
+                retry: {
+                    Task { await model.retryWorkflowTagPreview() }
                 },
                 cancel: {
                     model.dismissWorkflowTagPreview()
@@ -547,8 +552,10 @@ struct LibraryWindowView: View {
 
 private struct WorkflowTagReviewSheet: View {
     let preview: WorkflowTagPreview?
+    let failureMessage: String?
     let buildPreview: (String) -> Void
     let apply: () -> Void
+    let retry: () -> Void
     let cancel: () -> Void
     @State private var tagName = "review:strong"
 
@@ -560,19 +567,45 @@ private struct WorkflowTagReviewSheet: View {
                 Text("No catalog change has been made yet.")
                     .foregroundStyle(.secondary)
                 LabeledContent("Action", value: "Add tag \(preview.tagName.rawValue)")
+                LabeledContent("Operations", value: preview.plan.steps.count.formatted())
                 LabeledContent("Selected assets", value: preview.plan.snapshot.assetIDs.count.formatted())
                 LabeledContent("Catalog revision", value: preview.plan.snapshot.catalogRevision.formatted())
                 LabeledContent("Approval", value: "Required before applying")
+                LabeledContent("Impact", value: "Non-destructive metadata change")
+                Text("This action has no automatic undo. A later tag removal must be a separate, reviewed action.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Exact targets")
+                    .font(.headline)
+                ForEach(preview.targetAssetNames, id: \.self) { name in
+                    Text(name)
+                        .accessibilityIdentifier("workflow.target.\(name)")
+                }
                 Text("Framebase will re-check the exact selected assets, tags, and album membership immediately before applying this plan. If anything changed, it will stop and require a new preview.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Button("Cancel", role: .cancel, action: cancel)
-                    Spacer()
-                    Button("Approve and Apply", action: apply)
-                        .keyboardShortcut(.defaultAction)
-                        .accessibilityIdentifier("workflow.approveAndApply")
+                if let failureMessage {
+                    Label("This run did not apply: \(failureMessage)", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("workflow.failure")
+                    Text("Retry creates a new exact preview. It never resumes a failed run against changed library state.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Cancel", role: .cancel, action: cancel)
+                        Spacer()
+                        Button("Retry as New Preview", action: retry)
+                            .accessibilityIdentifier("workflow.retry")
+                    }
+                } else {
+                    HStack {
+                        Button("Cancel", role: .cancel, action: cancel)
+                        Spacer()
+                        Button("Approve and Apply", action: apply)
+                            .keyboardShortcut(.defaultAction)
+                            .accessibilityIdentifier("workflow.approveAndApply")
+                    }
                 }
             } else {
                 Text("Create a reviewable tag workflow for the current selection.")
