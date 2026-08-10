@@ -112,6 +112,10 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
         if query.scope.isAlbum || !query.filter.albumIDs.isEmpty { regions.append(Table("album_assets")) }
         if !query.filter.tagIDs.isEmpty { regions.append(Table("asset_tags")) }
         if query.filter.folderPath != nil { regions.append(Table("folders")) }
+        if query.filter.recognizedText != nil {
+            regions.append(Table("analysis_results"))
+            regions.append(Table("analysis_text_lines"))
+        }
         let observation = ValueObservation.tracking(regions: regions) { db in
             let statement = Self.queryStatement(query)
             return try Int.fetchOne(
@@ -443,6 +447,25 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
                 arguments: [like, like, like, like, like]
             )
         }
+        if let recognizedText = filter.recognizedText, !recognizedText.isEmpty {
+            let normalized = recognizedText
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let like = "%\(Self.escapedLikeLiteral(normalized))%"
+            statement.append(
+                """
+                EXISTS(
+                    SELECT 1
+                    FROM analysis_results
+                    JOIN analysis_text_lines ON analysis_text_lines.result_id = analysis_results.id
+                    WHERE analysis_results.asset_id = assets.id
+                      AND analysis_results.status = 'succeeded'
+                      AND analysis_text_lines.normalized_text LIKE ? ESCAPE '\\' COLLATE NOCASE
+                )
+                """,
+                arguments: [like]
+            )
+        }
         if let folderPath = filter.folderPath, !folderPath.isEmpty {
             statement.append(
                 """
@@ -489,6 +512,13 @@ public struct CatalogAssetRepository: AssetRepository, Sendable {
         if let rating = filter.rating { statement.append("assets.rating = ?", arguments: [rating.rawValue]) }
         if let favorite = filter.favorite { statement.append("assets.favorite = ?", arguments: [favorite]) }
         return statement
+    }
+
+    private static func escapedLikeLiteral(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
     }
 
     private static func scopeStatement(_ scope: AssetScope) -> ScopeStatement {

@@ -11,6 +11,10 @@ public enum AssetScope: Hashable, Sendable {
 
 public struct AssetFilter: Codable, Hashable, Sendable {
     public var text: String?
+    /// Local-only recognized text. This remains distinct from the regular
+    /// metadata search so a user can explicitly control when Vision-derived
+    /// text participates in a catalog query.
+    public var recognizedText: String?
     public var folderPath: String?
     public var tagIDs: Set<TagID>
     public var albumIDs: Set<AlbumID>
@@ -20,6 +24,7 @@ public struct AssetFilter: Codable, Hashable, Sendable {
 
     public init(
         text: String? = nil,
+        recognizedText: String? = nil,
         folderPath: String? = nil,
         tagIDs: Set<TagID> = [],
         albumIDs: Set<AlbumID> = [],
@@ -28,6 +33,7 @@ public struct AssetFilter: Codable, Hashable, Sendable {
         favorite: Bool? = nil
     ) {
         self.text = text?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.recognizedText = recognizedText?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.folderPath = folderPath?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.tagIDs = tagIDs
         self.albumIDs = albumIDs

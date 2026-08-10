@@ -98,6 +98,9 @@ final class LibraryWindowModel {
     var searchText = "" {
         didSet { assetFilter.text = searchText }
     }
+    var recognizedTextSearch = "" {
+        didSet { assetFilter.recognizedText = recognizedTextSearch }
+    }
     var assetSort = AssetSort.defaultSort {
         didSet { restartAssetObservation() }
     }
@@ -112,6 +115,8 @@ final class LibraryWindowModel {
         }
     }
     var selectedAssets: [Asset] = []
+    var selectedAnalysisResults: [AssetAnalysisResult] = []
+    var isAnalyzingSelection = false
     var inspectorSelectionIsLimited = false
     var inspectorPreviewState: AssetThumbnailState?
     var selectionAnchorID: AssetID?
@@ -459,6 +464,7 @@ final class LibraryWindowModel {
 
     func clearAssetFilters() {
         searchText = ""
+        recognizedTextSearch = ""
         assetFilter = AssetFilter()
     }
 
@@ -477,6 +483,7 @@ final class LibraryWindowModel {
     func applySavedSearch(_ savedSearch: SavedSearch) {
         assetFilter = savedSearch.filter
         searchText = savedSearch.filter.text ?? ""
+        recognizedTextSearch = savedSearch.filter.recognizedText ?? ""
         assetSort = savedSearch.sort
         navigationTarget = .allAssets
     }
@@ -651,6 +658,28 @@ final class LibraryWindowModel {
             await refreshInspectorNow()
             try await refreshVisibleAssetIDs()
             statusMessage = "The original was downloaded, verified, and restored to managed local storage."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func analyzeSelectedAssets() async {
+        let selection = selectedAssetIDs
+        guard !selection.isEmpty, !isAnalyzingSelection else { return }
+
+        isAnalyzingSelection = true
+        defer { isAnalyzingSelection = false }
+        do {
+            let results = try await container.analyzeLocally(
+                assetIDs: selection,
+                kinds: Set(AnalysisKind.allCases)
+            )
+            guard selection == selectedAssetIDs else { return }
+            selectedAnalysisResults = results
+            await refreshInspectorNow()
+            statusMessage = "Finished local analysis for \(selection.count) image\(selection.count == 1 ? "" : "s"). Framebase did not change any folders, tags, or asset details."
+        } catch is CancellationError {
+            return
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -944,6 +973,7 @@ final class LibraryWindowModel {
         }
         inspectorPreviewRequestID = nil
         selectedAssets = []
+        selectedAnalysisResults = []
         selectedTags = []
         selectedDuplicateCandidate = nil
         selectedTrashReceipts = []
@@ -978,10 +1008,12 @@ final class LibraryWindowModel {
                 if let catalog = container.catalogDatabase {
                     let candidates = try await catalog.cloud.duplicateCandidates()
                     selectedDuplicateCandidate = candidates.first { $0.assetIDs.contains(asset.id) }
+                    selectedAnalysisResults = try await catalog.intelligence.results(for: asset.id)
                 }
             } else {
                 inspectorPreviewState = nil
                 selectedDuplicateCandidate = nil
+                selectedAnalysisResults = []
             }
             selectedTrashReceipts = try await repository.trashReceipts(for: selection)
         } catch is CancellationError {

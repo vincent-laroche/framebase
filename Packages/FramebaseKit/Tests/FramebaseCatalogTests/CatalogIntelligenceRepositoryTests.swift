@@ -19,12 +19,15 @@ struct CatalogIntelligenceRepositoryTests {
 
         #expect(try await database.intelligence.assetIDsMatchingOCR("framebase") == [asset.id])
         #expect(try await database.intelligence.results(for: asset.id).count == 1)
+        let recognizedTextQuery = AssetQuery(scope: .allAssets, filter: AssetFilter(recognizedText: "FRAMEBASE"))
+        #expect(try await database.assets.orderedIDs(matching: recognizedTextQuery, sortedBy: .defaultSort) == [asset.id])
 
         try await database.intelligence.markStaleIfSourceDigestDiffers(
             assetID: asset.id,
             digest: String(repeating: "b", count: 64)
         )
         #expect(try await database.intelligence.results(for: asset.id).first?.status == .stale)
+        #expect(try await database.assets.orderedIDs(matching: recognizedTextQuery, sortedBy: .defaultSort).isEmpty)
 
         let reopened = try CatalogDatabase(catalogURL: temporary.databaseURL)
         #expect(try await reopened.intelligence.results(for: asset.id).first?.provenance.derivativeSHA256 == String(repeating: "a", count: 64))

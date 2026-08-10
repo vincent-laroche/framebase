@@ -208,6 +208,45 @@ final class FramebaseUITests: XCTestCase {
     }
 
     @MainActor
+    func testLocalAnalysisShowsProvenanceWithoutChangingOrganization() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-\(UUID().uuidString).framebase", isDirectory: true)
+        let sourceDirectoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-Sources-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectoryURL, withIntermediateDirectories: true)
+        let sourceURL = try writeJPEG(named: "analysis-sample.jpg", in: sourceDirectoryURL)
+        let app = XCUIApplication()
+        app.launchEnvironment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] = rootURL.path
+        app.launchEnvironment["FRAMEBASE_UI_TEST_IMPORT_SOURCES"] = sourceURL.path
+        app.launch()
+        defer {
+            app.terminate()
+            try? FileManager.default.removeItem(at: rootURL)
+            try? FileManager.default.removeItem(at: sourceDirectoryURL)
+        }
+
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        let cell = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "asset.")
+        ).element(boundBy: 0)
+        XCTAssertTrue(cell.waitForExistence(timeout: 30))
+        cell.click()
+        XCTAssertTrue(app.buttons["inspector.analyzeLocally"].waitForExistence(timeout: 10))
+        let foldersBeforeAnalysis = userFolderNames(at: rootURL)
+
+        app.buttons["inspector.analyzeLocally"].click()
+        let completionAlert = app.alerts.firstMatch
+        XCTAssertTrue(completionAlert.waitForExistence(timeout: 30))
+        completionAlert.buttons["OK"].click()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["analysis.provenance"].waitForExistence(timeout: 10),
+            "The completed analysis did not show result provenance."
+        )
+        XCTAssertEqual(userFolderNames(at: rootURL), foldersBeforeAnalysis)
+    }
+
+    @MainActor
     func testManualOrganizationAlbumAndTagControls() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("FramebaseUITests-\(UUID().uuidString).framebase", isDirectory: true)

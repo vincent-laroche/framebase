@@ -35,6 +35,7 @@ final class AppContainer {
     @ObservationIgnored private(set) var importCoordinator: (any ImportCoordinator)?
     @ObservationIgnored private(set) var thumbnailProvider: (any ThumbnailProvider)?
     @ObservationIgnored private(set) var cloudSync: FramebaseSync?
+    @ObservationIgnored private let localIntelligenceService = VisionIntelligenceService()
 
     let catalogSchemaVersion = FramebaseCatalogFoundation.currentSchemaVersion
     let thumbnailCacheFormatVersion = FramebaseMediaFoundation.thumbnailCacheFormatVersion
@@ -264,6 +265,37 @@ final class AppContainer {
         cloudConflicts = try await catalogDatabase.cloud.unresolvedConflicts()
     }
 
+    /// Runs caller-selected Apple Vision requests against managed originals.
+    /// The bounded derivative stays in memory; only local catalog metadata is stored.
+    func analyzeLocally(
+        assetIDs: Set<AssetID>,
+        kinds: Set<AnalysisKind>
+    ) async throws -> [AssetAnalysisResult] {
+        guard let catalogDatabase, let assetRepository, let assetBlobStore else {
+            throw LocalIntelligenceError.libraryUnavailable
+        }
+        guard !assetIDs.isEmpty else { return [] }
+
+        let assets = try await assetRepository.assets(ids: assetIDs)
+        var storedResults: [AssetAnalysisResult] = []
+        for asset in assets.sorted(by: { $0.id.description < $1.id.description }) {
+            try Task.checkCancellation()
+            let sourceURL = try await assetBlobStore.resolve(asset.storageKey)
+            let request = try AssetAnalysisRequest(assetID: asset.id, kinds: kinds)
+            let results = try await localIntelligenceService.analyze(request, sourceURL: sourceURL)
+
+            for result in results {
+                try await catalogDatabase.intelligence.markStaleIfSourceDigestDiffers(
+                    assetID: asset.id,
+                    digest: result.provenance.derivativeSHA256
+                )
+                try await catalogDatabase.intelligence.store(result)
+            }
+            storedResults.append(contentsOf: results)
+        }
+        return storedResults
+    }
+
     private func activateLibrary(_ layout: LibraryPackageLayout, persistSelection: Bool = true) async throws {
         let catalog = try CatalogDatabase(catalogURL: layout.catalogDatabaseURL)
         let blobStore = try ManagedAssetBlobStore(
@@ -338,5 +370,13 @@ enum CloudPreparationError: LocalizedError {
         case .pairingCredentialRequired: "A one-time pairing credential is required to prepare cloud backing."
         case .migrationNotPrepared: "Prepare a cloud migration manifest before uploading originals."
         }
+    }
+}
+
+enum LocalIntelligenceError: LocalizedError {
+    case libraryUnavailable
+
+    var errorDescription: String? {
+        "Open a Framebase library before running local analysis."
     }
 }

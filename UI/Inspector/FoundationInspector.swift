@@ -72,6 +72,8 @@ struct FoundationInspector: View {
                 }
             }
 
+            localAnalysis
+
             Section("Organization") {
                 Toggle("Favorite", isOn: favoriteBinding(asset.favorite))
                 Picker("Rating", selection: ratingBinding(asset.rating.rawValue)) {
@@ -162,6 +164,9 @@ struct FoundationInspector: View {
                     }
                 }
                 organizationActions
+            }
+            Section("Local analysis") {
+                analysisControls
             }
             trashRecoveryState
             tagEditor
@@ -271,6 +276,90 @@ struct FoundationInspector: View {
                     .accessibilityIdentifier("inspector.addTag")
                     .disabled(proposedTagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+        }
+    }
+
+    private var localAnalysis: some View {
+        Section("Local analysis") {
+            analysisControls
+            if model.selectedAnalysisResults.isEmpty {
+                Text("No local analysis has been run for this image.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(model.selectedAnalysisResults, id: \.id) { result in
+                    Divider()
+                    Text("Local analysis provenance")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("analysis.provenance")
+                    LabeledContent("Type", value: analysisTitle(result.kind))
+                    LabeledContent("Status", value: result.status.rawValue.capitalized)
+                    LabeledContent("Engine", value: result.provenance.engine)
+                    LabeledContent("Captured", value: formatted(result.provenance.capturedAt))
+                    LabeledContent("Derivative", value: "max \(result.provenance.derivativeMaximumPixelDimension) px")
+                    LabeledContent("Request revision", value: result.provenance.requestRevision.formatted())
+                    LabeledContent("Derivative SHA-256") {
+                        Text(result.provenance.derivativeSHA256)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    analysisPayload(result.payload)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var analysisControls: some View {
+        Button {
+            Task { await model.analyzeSelectedAssets() }
+        } label: {
+            if model.isAnalyzingSelection {
+                Label("Analyzing Locally…", systemImage: "hourglass")
+            } else {
+                Label("Analyze Locally", systemImage: "text.viewfinder")
+            }
+        }
+        .accessibilityIdentifier("inspector.analyzeLocally")
+        .disabled(model.isAnalyzingSelection)
+
+        Text("Runs OCR, barcode, document, and anonymous face-region detection on this Mac. Framebase will not organize assets automatically.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private func analysisPayload(_ payload: AnalysisPayload) -> some View {
+        switch payload {
+        case let .ocr(lines):
+            LabeledContent("Recognized text", value: "\(lines.count) line\(lines.count == 1 ? "" : "s")")
+            ForEach(Array(lines.prefix(5).enumerated()), id: \.offset) { _, line in
+                Text(line.text)
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
+            if lines.count > 5 {
+                Text("\(lines.count - 5) additional recognized line\(lines.count == 6 ? "" : "s") are indexed for local search.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case let .barcode(count):
+            LabeledContent("Barcodes", value: count.formatted())
+        case let .document(confidence):
+            LabeledContent("Document confidence", value: confidence.formatted(.percent.precision(.fractionLength(0))))
+        case let .faceRegions(count):
+            LabeledContent("Anonymous face regions", value: count.formatted())
+        }
+    }
+
+    private func analysisTitle(_ kind: AnalysisKind) -> String {
+        switch kind {
+        case .ocr: "Recognized text"
+        case .barcode: "Barcode detection"
+        case .document: "Document detection"
+        case .faceRegions: "Face regions"
         }
     }
 

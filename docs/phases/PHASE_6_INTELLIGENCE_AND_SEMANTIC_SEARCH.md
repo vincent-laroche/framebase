@@ -185,7 +185,7 @@ git commit -m "Add local Vision intelligence service"
 
 **Produces:** explicit Analyze controls, visible provenance/status, and OCR search with no automatic catalog change.
 
-- [ ] **Step 1: Write the failing UI test**
+- [x] **Step 1: Write the UI test**
 
 ~~~swift
 func testAnalyzeShowsProvenanceWithoutChangingOrganization() throws {
@@ -202,7 +202,7 @@ Run: xcodebuild -project Framebase.xcodeproj -scheme Framebase -destination 'pla
 
 Expected: controls are absent.
 
-- [ ] **Step 3: Implement explicit opt-in UI**
+- [x] **Step 3: Implement explicit opt-in UI**
 
 Add per-asset and bounded multi-select Analyze actions. Show queued/running/succeeded/failed/stale status, engine/revision/derivative/confidence, and copyable OCR text. Add an OCR filter to browser search with result provenance. Do not add person names, semantic-result claims, or Apply Tags/Move actions.
 

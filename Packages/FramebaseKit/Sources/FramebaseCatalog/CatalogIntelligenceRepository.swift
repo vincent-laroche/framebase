@@ -41,6 +41,16 @@ public struct CatalogIntelligenceRepository: IntelligenceRepository, Sendable {
     public func assetIDsMatchingOCR(_ text: String) async throws -> [AssetID] {
         let normalized = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return [] }
-        return try await databasePool.read { db in try String.fetchAll(db, sql: "SELECT DISTINCT r.asset_id FROM analysis_results r JOIN analysis_text_lines l ON l.result_id = r.id WHERE r.status = 'succeeded' AND l.normalized_text LIKE ? ORDER BY r.asset_id", arguments: ["%\(normalized)%"]).compactMap(UUID.init(uuidString:)).map(AssetID.init(rawValue:)) }
+        let literal = normalized
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        return try await databasePool.read {
+            db in try String.fetchAll(
+                db,
+                sql: "SELECT DISTINCT r.asset_id FROM analysis_results r JOIN analysis_text_lines l ON l.result_id = r.id WHERE r.status = 'succeeded' AND l.normalized_text LIKE ? ESCAPE '\\' ORDER BY r.asset_id",
+                arguments: ["%\(literal)%"]
+            ).compactMap(UUID.init(uuidString:)).map(AssetID.init(rawValue:))
+        }
     }
 }

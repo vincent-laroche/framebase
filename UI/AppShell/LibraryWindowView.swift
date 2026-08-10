@@ -121,6 +121,25 @@ struct LibraryWindowView: View {
                     Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
                 }
 
+                HStack(spacing: 4) {
+                    Image(systemName: "text.viewfinder")
+                        .foregroundStyle(.secondary)
+                    TextField("Recognized text", text: recognizedTextSearchBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 170)
+                        .accessibilityIdentifier("toolbar.recognizedTextSearch")
+                    if !model.recognizedTextSearch.isEmpty {
+                        Button {
+                            model.recognizedTextSearch = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear recognized text search")
+                    }
+                }
+                .help("Search locally recognized text only")
+
                 Menu {
                     Button("Save Current Search…") { isSaveSearchPresented = true }
                     if !model.savedSearches.isEmpty {
@@ -329,6 +348,10 @@ struct LibraryWindowView: View {
 
     private var searchTextBinding: Binding<String> {
         Binding(get: { model.searchText }, set: { model.searchText = $0 })
+    }
+
+    private var recognizedTextSearchBinding: Binding<String> {
+        Binding(get: { model.recognizedTextSearch }, set: { model.recognizedTextSearch = $0 })
     }
 
     private var browserPresentationBinding: Binding<AssetBrowserPresentation> {
