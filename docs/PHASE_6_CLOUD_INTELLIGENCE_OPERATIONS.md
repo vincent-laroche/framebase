@@ -2,6 +2,17 @@
 
 **Status:** Development gateway provisioned; model calls remain disabled. No image transmission, provider credential, Worker binding, route, migration, or deployment has occurred.
 
+## Live readiness audit — 2026-08-10
+
+This was a read-only audit; it did not send a model request or change any Cloudflare resource.
+
+- `framebase-vision-dev` exists with payload logging disabled, no cache, a 10 requests/minute fixed limit, one retry, and Unified Billing ZDR enabled.
+- The gateway currently has **no gateway-level spend-limit rule**. The legacy account-level limit stores the intended USD 10/month configuration but reports `enabled: false`; automatic credit top-up is disabled.
+- Cloudflare's current documentation says an enabled gateway ZDR setting routes Unified Billing Anthropic traffic through the provider's ZDR-capable configuration, while logging remains a separate setting. The live gateway has both ZDR and `collect_logs: false` enabled. This does not authorize a model request by itself.
+- Unified Billing requires purchased credits. Do not buy credits or enable any automatic top-up without a fresh checkout approval, even though the monthly ceiling has been approved.
+
+Before the synthetic-only proof can run, configure and re-read a gateway-level USD 10/month blocking rule, verify sufficient manually purchased credits, and keep the route fail-closed until those controls are observed. Do not transmit real-library media in this proof.
+
 ## Decision requested
 
 Approve or decline a development-only cloud-intelligence experiment after the local Phase 6 verification gate passes. The recommendation is to begin with explicit single-asset analysis and semantic search only; do not add queues, workflows, automatic analysis, or automatic organization in this approval.
