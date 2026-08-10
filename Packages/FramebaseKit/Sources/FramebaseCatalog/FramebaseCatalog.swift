@@ -11,7 +11,8 @@ public enum FramebaseCatalogFoundation {
     public static let organizationCloudParityMigrationIdentifier = "v5_organization_cloud_parity"
     public static let receiptCloudParityMigrationIdentifier = "v6_receipt_cloud_parity"
     public static let backupCloudParityMigrationIdentifier = "v7_backup_cloud_parity"
-    public static let currentSchemaVersion = 7
+    public static let intelligenceMigrationIdentifier = "v8_local_intelligence"
+    public static let currentSchemaVersion = 8
 
     public static func configure(_ configuration: inout Configuration) {
         configuration.foreignKeysEnabled = true
@@ -53,6 +54,7 @@ public final class CatalogDatabase: Sendable {
     public let savedSearches: CatalogSavedSearchRepository
     public let exports: CatalogExportReceiptRepository
     public let backups: CatalogBackupManifestRepository
+    public let intelligence: CatalogIntelligenceRepository
     public let cloud: CatalogCloudRepository
 
     let databasePool: DatabasePool
@@ -94,6 +96,7 @@ public final class CatalogDatabase: Sendable {
         self.savedSearches = CatalogSavedSearchRepository(databasePool: pool)
         self.exports = CatalogExportReceiptRepository(databasePool: pool)
         self.backups = CatalogBackupManifestRepository(databasePool: pool)
+        self.intelligence = CatalogIntelligenceRepository(databasePool: pool)
         self.cloud = CatalogCloudRepository(databasePool: pool)
     }
 
@@ -392,6 +395,36 @@ public final class CatalogDatabase: Sendable {
                 sql: "UPDATE catalog_settings SET value = '7', updated_at_ms = ? WHERE key = 'schema_version'",
                 arguments: [CatalogDate.milliseconds(Date())]
             )
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.intelligenceMigrationIdentifier) { db in
+            try db.execute(sql: """
+                CREATE TABLE analysis_results (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    engine TEXT NOT NULL,
+                    request_revision INTEGER NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    derivative_sha256 TEXT NOT NULL,
+                    derivative_maximum_pixel_dimension INTEGER NOT NULL,
+                    captured_at_ms INTEGER NOT NULL,
+                    locales_json TEXT NOT NULL CHECK(json_valid(locales_json)),
+                    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    UNIQUE(asset_id, kind, engine, request_revision, derivative_sha256)
+                );
+                CREATE INDEX analysis_results_asset_status_index ON analysis_results(asset_id, status, captured_at_ms DESC);
+                CREATE TABLE analysis_text_lines (
+                    result_id TEXT NOT NULL REFERENCES analysis_results(id) ON DELETE CASCADE,
+                    line_index INTEGER NOT NULL,
+                    normalized_text TEXT NOT NULL,
+                    PRIMARY KEY(result_id, line_index)
+                );
+                CREATE INDEX analysis_text_lines_text_index ON analysis_text_lines(normalized_text);
+                """)
+            try db.execute(sql: "UPDATE catalog_settings SET value = '8', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
         }
         return migrator
     }

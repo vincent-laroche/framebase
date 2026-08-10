@@ -162,7 +162,7 @@ public enum AnalysisPayload: Codable, Hashable, Sendable {
         }
     }
 
-    var kind: AnalysisKind {
+    public var kind: AnalysisKind {
         switch self {
         case .ocr: .ocr
         case .barcode: .barcode

@@ -97,7 +97,7 @@ git commit -m "Add intelligence provenance contracts"
 
 **Produces:** IntelligenceRepository with result persistence, lookup, structured OCR query, and stale invalidation.
 
-- [ ] **Step 1: Write the failing migration/reopen test**
+- [x] **Step 1: Write the failing migration/reopen test**
 
 ~~~swift
 func testChangedDerivativeMarksPriorResultStaleWithoutDeletingIt() async throws {
@@ -107,23 +107,23 @@ func testChangedDerivativeMarksPriorResultStaleWithoutDeletingIt() async throws 
 }
 ~~~
 
-- [ ] **Step 2: Confirm the test fails**
+- [x] **Step 2: Confirm the test fails**
 
 Run: swift test --package-path Packages/FramebaseKit --filter CatalogIntelligenceRepositoryTests
 
 Expected: compile failure because the repository is absent.
 
-- [ ] **Step 3: Implement additive tables and indexes**
+- [x] **Step 3: Implement additive tables and indexes**
 
 Add analysis_runs, analysis_results, and analysis_text_lines with foreign keys to assets and uniqueness on asset, kind, engine, revision, and derivative digest. Use typed columns or validated JSON for geometry/confidence. Add only normalized parameterized OCR search indexing. Never log or expose stored OCR/barcode values.
 
-- [ ] **Step 4: Verify catalog tests**
+- [x] **Step 4: Verify catalog tests**
 
 Run: swift test --package-path Packages/FramebaseKit --filter CatalogIntelligenceRepositoryTests
 
 Expected: PASS from empty and upgraded catalogs, idempotent retries, stale marking, parameterized lookup, and retained prior provenance.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ~~~bash
 git add Packages/FramebaseKit/Sources/FramebaseCatalog Packages/FramebaseKit/Tests/FramebaseCatalogTests

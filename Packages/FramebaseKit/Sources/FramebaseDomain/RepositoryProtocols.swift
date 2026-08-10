@@ -71,6 +71,13 @@ public protocol BackupManifestRepository: Sendable {
     func recordRestoreDrill(manifestID: BackupManifestID, result: String, at date: Date) async throws
 }
 
+public protocol IntelligenceRepository: Sendable {
+    func store(_ result: AssetAnalysisResult) async throws
+    func results(for assetID: AssetID) async throws -> [AssetAnalysisResult]
+    func markStaleIfSourceDigestDiffers(assetID: AssetID, digest: String) async throws
+    func assetIDsMatchingOCR(_ text: String) async throws -> [AssetID]
+}
+
 public struct FolderDeletionReceipt: Sendable {
     public let deletedFolders: [Folder]
     public let priorAssetAssignments: [AssetID: FolderID]

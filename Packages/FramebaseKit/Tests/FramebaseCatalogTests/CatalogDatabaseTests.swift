@@ -875,7 +875,7 @@ struct CatalogDatabaseTests {
     }
 }
 
-private final class TemporaryCatalog {
+final class TemporaryCatalog {
     let directoryURL: URL
     let databaseURL: URL
     let database: CatalogDatabase
@@ -893,7 +893,7 @@ private final class TemporaryCatalog {
     }
 }
 
-private func makeAsset(
+func makeAsset(
     id: AssetID = AssetID(),
     parentFolderID: FolderID,
     filename: String = "fixture.jpg",
