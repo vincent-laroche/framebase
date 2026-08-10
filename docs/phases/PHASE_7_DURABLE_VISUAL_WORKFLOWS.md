@@ -50,8 +50,9 @@
 
 ## Task 4: Add a Mac-first preview and approval UI
 
+- [x] Provide a terminal-tested local tag workflow: its preview states the exact action, selected-asset count, catalog revision, drift stop, and required approval; it makes no organizational change until approved, then writes one append-only audit group.
 - [ ] Add explicit workflow preview and apply controls, showing exact target assets, operation count, drift warning, and reversible/irreversible classification.
-- [ ] Add terminal-only UI tests proving a dry run changes no organization and an approved safe action produces one auditable group.
+- [x] Add terminal-only UI tests proving a dry run changes no organization and an approved safe action produces one auditable group.
 - [ ] Add visible failure/retry state and an undo path where the domain operation is reversible.
 
 ## Task 5: Add cloud durability only after a separate resource approval

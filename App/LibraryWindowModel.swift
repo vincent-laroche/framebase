@@ -13,6 +13,14 @@ struct FolderDeletionPrompt: Identifiable, Sendable {
     var id: FolderID { folderID }
 }
 
+struct WorkflowTagPreview: Identifiable, Sendable {
+    let workflowRunID: UUID
+    let plan: WorkflowPlan
+    let tagName: TagName
+
+    var id: UUID { workflowRunID }
+}
+
 private struct FolderHistoryEntry: Sendable {
     let actionName: String
     let action: FolderHistoryAction
@@ -132,6 +140,7 @@ final class LibraryWindowModel {
     var selectedTrashReceipts: [AssetTrashReceipt] = []
     var savedSearches: [SavedSearch] = []
     var hairSolutionsTemplatePreview: LibraryTemplateApplicationPreview?
+    var workflowTagPreview: WorkflowTagPreview?
     var pendingFolderDeletion: FolderDeletionPrompt?
     var isInspectorVisible = true
     var thumbnailSize: Double = 176 {
@@ -683,6 +692,60 @@ final class LibraryWindowModel {
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    /// Previews a safe organization workflow without changing a tag, folder,
+    /// album, rating, favorite, Trash state, or managed original.
+    func prepareTagWorkflow(named rawTagName: String) async {
+        guard !selectedAssetIDs.isEmpty else { return }
+        guard !container.cloudBackingIsActive, let catalog = container.catalogDatabase else {
+            statusMessage = "Workflow application is unavailable while cloud synchronization is active."
+            return
+        }
+        do {
+            let tagName = try TagName(rawTagName)
+            let snapshot = try await catalog.workflowInputSnapshot(assetIDs: selectedAssetIDs)
+            let definition = try WorkflowDefinition(
+                name: "Apply \(tagName.rawValue)",
+                trigger: .manualSelection,
+                actions: [.proposeTag(tagName.rawValue)]
+            )
+            let plan = try WorkflowPlanner().plan(definition: definition, snapshot: snapshot)
+            try await catalog.workflows.store(definition, at: .now)
+            let run = try await catalog.workflows.enqueue(plan: plan, actor: .human, at: .now)
+            workflowTagPreview = WorkflowTagPreview(workflowRunID: run.id, plan: plan, tagName: tagName)
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func approveAndApplyWorkflowTagPreview() async {
+        guard let preview = workflowTagPreview, let catalog = container.catalogDatabase else { return }
+        do {
+            let currentSnapshot = try await catalog.workflowInputSnapshot(assetIDs: Set(preview.plan.snapshot.assetIDs))
+            _ = try await catalog.workflows.approve(
+                workflowRunID: preview.workflowRunID,
+                currentSnapshot: currentSnapshot,
+                actor: .human,
+                at: .now
+            )
+            _ = try await catalog.workflows.executeApproved(
+                workflowRunID: preview.workflowRunID,
+                currentSnapshot: currentSnapshot,
+                actor: .human,
+                at: .now
+            )
+            workflowTagPreview = nil
+            await refreshInspectorNow()
+            statusMessage = "Applied \(preview.tagName.rawValue) to \(preview.plan.snapshot.assetIDs.count) selected asset\(preview.plan.snapshot.assetIDs.count == 1 ? "" : "s") after reviewing the exact plan."
+        } catch {
+            workflowTagPreview = nil
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func dismissWorkflowTagPreview() {
+        workflowTagPreview = nil
     }
 
     func libraryStateDidChange() {

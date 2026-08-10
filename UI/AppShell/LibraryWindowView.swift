@@ -9,6 +9,7 @@ struct LibraryWindowView: View {
     @AppStorage("browser.thumbnailSize") private var storedThumbnailSize = 176.0
     @SceneStorage("library.browserPresentation") private var storedBrowserPresentation = AssetBrowserPresentation.grid.rawValue
     @State private var isSaveSearchPresented = false
+    @State private var isWorkflowTagComposerPresented = false
 
     init(container: AppContainer) {
         _model = State(initialValue: LibraryWindowModel(container: container))
@@ -182,6 +183,14 @@ struct LibraryWindowView: View {
                 .disabled(!model.container.canBrowseLibrary)
 
                 Button {
+                    isWorkflowTagComposerPresented = true
+                } label: {
+                    Label("Workflow Tag…", systemImage: "checklist")
+                }
+                .accessibilityIdentifier("toolbar.workflowTag")
+                .disabled(model.selectedAssetIDs.isEmpty || model.container.cloudBackingIsActive)
+
+                Button {
                     Task {
                         if model.navigationTarget == .trash {
                             await model.restoreSelectedAssets()
@@ -290,6 +299,24 @@ struct LibraryWindowView: View {
                     isSaveSearchPresented = false
                 },
                 cancel: { isSaveSearchPresented = false }
+            )
+        }
+        .sheet(isPresented: $isWorkflowTagComposerPresented) {
+            WorkflowTagReviewSheet(
+                preview: model.workflowTagPreview,
+                buildPreview: { tagName in
+                    Task { await model.prepareTagWorkflow(named: tagName) }
+                },
+                apply: {
+                    Task {
+                        await model.approveAndApplyWorkflowTagPreview()
+                        isWorkflowTagComposerPresented = false
+                    }
+                },
+                cancel: {
+                    model.dismissWorkflowTagPreview()
+                    isWorkflowTagComposerPresented = false
+                }
             )
         }
         .alert("Framebase Couldn’t Complete That Action", isPresented: statusMessageBinding) {
@@ -515,6 +542,56 @@ struct LibraryWindowView: View {
         .padding(.vertical, 10)
         .background(.bar)
         .accessibilityIdentifier("import.progress")
+    }
+}
+
+private struct WorkflowTagReviewSheet: View {
+    let preview: WorkflowTagPreview?
+    let buildPreview: (String) -> Void
+    let apply: () -> Void
+    let cancel: () -> Void
+    @State private var tagName = "review:strong"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Workflow Review")
+                .font(.title2.weight(.semibold))
+            if let preview {
+                Text("No catalog change has been made yet.")
+                    .foregroundStyle(.secondary)
+                LabeledContent("Action", value: "Add tag \(preview.tagName.rawValue)")
+                LabeledContent("Selected assets", value: preview.plan.snapshot.assetIDs.count.formatted())
+                LabeledContent("Catalog revision", value: preview.plan.snapshot.catalogRevision.formatted())
+                LabeledContent("Approval", value: "Required before applying")
+                Text("Framebase will re-check the exact selected assets, tags, and album membership immediately before applying this plan. If anything changed, it will stop and require a new preview.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("Cancel", role: .cancel, action: cancel)
+                    Spacer()
+                    Button("Approve and Apply", action: apply)
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityIdentifier("workflow.approveAndApply")
+                }
+            } else {
+                Text("Create a reviewable tag workflow for the current selection.")
+                    .foregroundStyle(.secondary)
+                TextField("namespace:value", text: $tagName)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("workflow.tagName")
+                HStack {
+                    Button("Cancel", role: .cancel, action: cancel)
+                    Spacer()
+                    Button("Preview") { buildPreview(tagName) }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(tagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("workflow.preview")
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 460)
     }
 }
 

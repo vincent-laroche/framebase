@@ -296,6 +296,55 @@ final class FramebaseUITests: XCTestCase {
         XCTAssertTrue(waitForEmptyValue(of: tagField, timeout: 10))
     }
 
+    @MainActor
+    func testWorkflowTagPreviewRequiresApprovalBeforeOrganizationChanges() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-\(UUID().uuidString).framebase", isDirectory: true)
+        let sourceDirectoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-Sources-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectoryURL, withIntermediateDirectories: true)
+        let sourceURL = try writeJPEG(named: "workflow-sample.jpg", in: sourceDirectoryURL)
+        let app = XCUIApplication()
+        app.launchEnvironment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] = rootURL.path
+        app.launchEnvironment["FRAMEBASE_UI_TEST_IMPORT_SOURCES"] = sourceURL.path
+        app.launch()
+        defer {
+            app.terminate()
+            try? FileManager.default.removeItem(at: rootURL)
+            try? FileManager.default.removeItem(at: sourceDirectoryURL)
+        }
+
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        let cell = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "asset.")
+        ).element(boundBy: 0)
+        XCTAssertTrue(cell.waitForExistence(timeout: 30))
+        cell.click()
+        XCTAssertTrue(app.staticTexts["File"].waitForExistence(timeout: 10))
+        let beforePreview = assetOrganizationSnapshot(at: rootURL)
+
+        let workflowButton = app.buttons["toolbar.workflowTag"]
+        XCTAssertTrue(workflowButton.waitForExistence(timeout: 10))
+        workflowButton.click()
+        let tagField = app.textFields["workflow.tagName"]
+        XCTAssertTrue(tagField.waitForExistence(timeout: 10))
+        app.buttons["workflow.preview"].click()
+        XCTAssertTrue(app.buttons["workflow.approveAndApply"].waitForExistence(timeout: 10))
+        XCTAssertEqual(assetOrganizationSnapshot(at: rootURL), beforePreview)
+
+        app.buttons["workflow.approveAndApply"].click()
+        XCTAssertTrue(
+            waitForTagNames(["review:strong"], at: rootURL, timeout: 10),
+            "The approved workflow did not write its reviewed tag."
+        )
+        XCTAssertEqual(assetTagNames(at: rootURL), ["review:strong"])
+        XCTAssertEqual(
+            workflowAuditKinds(at: rootURL),
+            ["planCreated", "proposalCreated", "approvalGranted", "executionStarted", "executionSucceeded"]
+        )
+    }
+
     /// Scaled fixture test (300+ assets) that verifies:
     /// 1) Grid thumbnail rendering under scale with real/synthetic images.
     /// 2) Command-A selects all assets and updates inspector to "Selection".
@@ -534,6 +583,82 @@ final class FramebaseUITests: XCTestCase {
             rows.append(String(cString: text))
         }
         return rows
+    }
+
+    private func assetTagNames(at rootURL: URL) -> [String]? {
+        let catalogURL = rootURL
+            .appendingPathComponent("Catalog", isDirectory: true)
+            .appendingPathComponent("catalog.sqlite", isDirectory: false)
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(catalogURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+              let database else {
+            return nil
+        }
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            "SELECT tags.name FROM asset_tags JOIN tags ON tags.id = asset_tags.tag_id ORDER BY tags.name",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK,
+        let statement else {
+            return nil
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var names: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let text = sqlite3_column_text(statement, 0) else { return nil }
+            names.append(String(cString: text))
+        }
+        return names
+    }
+
+    private func workflowAuditKinds(at rootURL: URL) -> [String]? {
+        let catalogURL = rootURL
+            .appendingPathComponent("Catalog", isDirectory: true)
+            .appendingPathComponent("catalog.sqlite", isDirectory: false)
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(catalogURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+              let database else {
+            return nil
+        }
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            "SELECT kind FROM workflow_audit_events ORDER BY rowid",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK,
+        let statement else {
+            return nil
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var kinds: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let text = sqlite3_column_text(statement, 0) else { return nil }
+            kinds.append(String(cString: text))
+        }
+        return kinds
+    }
+
+    @MainActor
+    private func waitForTagNames(_ expectedNames: [String], at rootURL: URL, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if assetTagNames(at: rootURL) == expectedNames {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < deadline
+        return assetTagNames(at: rootURL) == expectedNames
     }
 
 }
