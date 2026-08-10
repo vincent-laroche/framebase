@@ -12,7 +12,8 @@ public enum FramebaseCatalogFoundation {
     public static let receiptCloudParityMigrationIdentifier = "v6_receipt_cloud_parity"
     public static let backupCloudParityMigrationIdentifier = "v7_backup_cloud_parity"
     public static let intelligenceMigrationIdentifier = "v8_local_intelligence"
-    public static let currentSchemaVersion = 8
+    public static let visualLearningMigrationIdentifier = "v9_visual_learning_reviews"
+    public static let currentSchemaVersion = 9
 
     public static func configure(_ configuration: inout Configuration) {
         configuration.foreignKeysEnabled = true
@@ -55,6 +56,7 @@ public final class CatalogDatabase: Sendable {
     public let exports: CatalogExportReceiptRepository
     public let backups: CatalogBackupManifestRepository
     public let intelligence: CatalogIntelligenceRepository
+    public let visualLearning: CatalogVisualLearningRepository
     public let cloud: CatalogCloudRepository
 
     let databasePool: DatabasePool
@@ -97,6 +99,7 @@ public final class CatalogDatabase: Sendable {
         self.exports = CatalogExportReceiptRepository(databasePool: pool)
         self.backups = CatalogBackupManifestRepository(databasePool: pool)
         self.intelligence = CatalogIntelligenceRepository(databasePool: pool)
+        self.visualLearning = CatalogVisualLearningRepository(databasePool: pool)
         self.cloud = CatalogCloudRepository(databasePool: pool)
     }
 
@@ -425,6 +428,63 @@ public final class CatalogDatabase: Sendable {
                 CREATE INDEX analysis_text_lines_text_index ON analysis_text_lines(normalized_text);
                 """)
             try db.execute(sql: "UPDATE catalog_settings SET value = '8', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.visualLearningMigrationIdentifier) { db in
+            try db.execute(sql: """
+                CREATE TABLE visual_assessments (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                    business_quality TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
+                    photo_role TEXT NOT NULL,
+                    hairline_presentation TEXT NOT NULL,
+                    confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+                    rationale TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model_identifier TEXT NOT NULL,
+                    assessment_schema_version INTEGER NOT NULL CHECK(assessment_schema_version > 0),
+                    derivative_sha256 TEXT NOT NULL,
+                    derivative_maximum_pixel_dimension INTEGER NOT NULL CHECK(derivative_maximum_pixel_dimension BETWEEN 1 AND 1600),
+                    captured_at_ms INTEGER NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    UNIQUE(asset_id, provider, model_identifier, assessment_schema_version, derivative_sha256)
+                );
+                CREATE INDEX visual_assessments_asset_captured_index ON visual_assessments(asset_id, captured_at_ms DESC);
+                CREATE TABLE visual_assessment_reviews (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    assessment_id TEXT NOT NULL REFERENCES visual_assessments(id) ON DELETE CASCADE,
+                    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                    decision TEXT NOT NULL,
+                    corrected_business_quality TEXT,
+                    corrected_photo_role TEXT,
+                    corrected_hairline_presentation TEXT,
+                    reviewed_at_ms INTEGER NOT NULL,
+                    created_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX visual_assessment_reviews_assessment_index ON visual_assessment_reviews(assessment_id, reviewed_at_ms ASC);
+                CREATE TABLE visual_assessment_feedback_events (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    assessment_id TEXT NOT NULL REFERENCES visual_assessments(id) ON DELETE CASCADE,
+                    review_id TEXT REFERENCES visual_assessment_reviews(id) ON DELETE SET NULL,
+                    outcome TEXT NOT NULL,
+                    captured_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX visual_assessment_feedback_assessment_index ON visual_assessment_feedback_events(assessment_id, captured_at_ms ASC);
+                CREATE TABLE before_after_relationships (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    before_asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                    after_asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL,
+                    source_assessment_id TEXT REFERENCES visual_assessments(id) ON DELETE SET NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    CHECK(before_asset_id != after_asset_id),
+                    UNIQUE(before_asset_id, after_asset_id)
+                );
+                CREATE INDEX before_after_relationships_asset_index ON before_after_relationships(before_asset_id, after_asset_id, status);
+                """)
+            try db.execute(sql: "UPDATE catalog_settings SET value = '9', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
         }
         return migrator
     }

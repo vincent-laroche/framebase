@@ -1,6 +1,6 @@
 # Phase 6 Cloud Intelligence — Approval Package
 
-**Status:** Draft only. No cloud-intelligence resource, secret, migration, route, binding, deployment, or image transmission is authorized by this document.
+**Status:** Development gateway provisioned; model calls remain disabled. No image transmission, provider credential, Worker binding, route, migration, or deployment has occurred.
 
 ## Decision requested
 
@@ -13,14 +13,14 @@ The existing development Worker is `framebase-api-dev`. This package does not as
 | Area | Recommended starting value | Approval required |
 | --- | --- | --- |
 | Environment | Existing development Worker and development data only | Yes |
-| Provider | Cloudflare AI Gateway in front of Anthropic Claude Sonnet; pin the exact dated model revision immediately before enablement so it remains replaceable | Partly — provider chosen; exact revision and current terms still required |
+| Provider | Cloudflare Unified Billing in front of Anthropic Claude Sonnet; pinned development model identifier: `anthropic/claude-sonnet-4-5` | Provider chosen; model calls remain blocked until the hard spend rule is active and current provider retention is accepted |
 | Input | A newly generated JPEG or PNG derivative no larger than 1,600 pixels on its longest edge; never the managed original | Yes |
 | Tasks | Manual caption, categories, detected objects, business-quality assessment, before/after candidates, hairline presentation assessment, and embedding generation; OCR remains local-first | Yes |
 | Payload retention | Provider retention disabled where offered; no prompt/response or image payload logging | Yes — confirm provider setting |
-| AI Gateway | Payload logging disabled; diagnostic events contain only opaque IDs, timing, status, model revision, and metered cost | Yes |
+| AI Gateway | Dedicated development gateway `framebase-vision-dev`, created 2026-08-10 with `collect_logs: false`, `zdr: true`, no cache, 10 requests/minute, and one retry | Verified; per-gateway spend rule did not persist and blocks model enablement |
 | Rate/concurrency | At most 2 concurrent requests and 10 assets per minute per enrolled device | Yes |
 | Retry | One automatic retry only for a transient, retryable failure; all other failures remain visible for manual retry | Yes |
-| Spend limit | **Recommended development ceiling: USD 20/month**; hard stop before any provider request once the recorded ceiling is reached | Yes — amount and currency |
+| Spend limit | **Approved ceiling: USD 10/month**; hard stop before any provider request once the enforced ceiling is reached | Blocked — Cloudflare currently reports zero AI credits and the account spending-limit configuration is disabled |
 | Vectorize | One development namespace per catalog and embedding revision: `framebase-dev/<catalog-id>/embedding-v1` | Yes |
 | D1 | Additive metadata-only migration, proposed as `0007_intelligence_metadata.sql`; no original bytes, image paths, OCR text, or credentials | Yes |
 | API scopes | New `intelligence.run` plus existing `library.read`; no organization or delete scope grants | Yes |
@@ -41,6 +41,8 @@ Never sent, stored in AI logs, or included in API error text:
 - any data from a personal library until a separate per-library authorization is given.
 
 The assessment schema must not request face detection, person identity, biometric templates, age, gender, ethnicity, medical inferences, or any other sensitive-person inference. Hairline is a visual business/composition attribute only, never a biometric identifier. Before/after output is a candidate relationship that requires a human confirmation.
+
+**Current provider-retention note:** Anthropic’s commercial API documentation says inputs and outputs are ordinarily deleted within 30 days unless a different agreement, such as zero data retention, is in place. Cloudflare `zdr` and disabled gateway logs do not establish Anthropic zero data retention. Do not send a real library image until Vincent explicitly accepts that default retention or supplies an approved zero-data-retention arrangement.
 
 ## Required implementation controls
 
@@ -82,13 +84,13 @@ Reply with the approved values for each item, or explicitly decline/defer cloud 
 - Development-only target: approve / decline
 - Provider and exact model/revision: Anthropic Claude Sonnet selected; exact dated revision to pin before enablement:
 - Provider data-retention terms reviewed: yes / no
-- AI Gateway payload logging disabled: yes / no
+- AI Gateway payload logging disabled: **yes — verified on `framebase-vision-dev`**
 - Derivative format and 1,600px maximum: approve / change
-- Monthly spend ceiling and currency:
+- Monthly spend ceiling and currency: **USD 10/month approved; enforcement currently unavailable because the account has zero AI credits and the account limit is disabled**
 - Vectorize namespace/version: approve / change
 - API scopes (`library.read`, `intelligence.run`): approve / change
 - D1 migration and synthetic-fixture proof: approve / decline
-- Personal-library analysis after synthetic proof: approve / decline
+- Personal-library analysis after synthetic proof: **approved, subject to the provider-retention note above**
 - Deployment after passing tests: approve / decline
 
 Until every required value is explicitly approved, Phase 6 cloud code and infrastructure remain out of scope.

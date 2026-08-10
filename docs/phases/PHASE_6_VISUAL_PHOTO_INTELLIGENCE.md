@@ -68,7 +68,7 @@ Before/after matching has a second local relationship record: `candidate`, `conf
 - [x] Restrict active local Vision requests to OCR, barcode, and document segmentation.
 - [x] Retain prior `faceRegions` values for decode-only catalog compatibility, without requesting, displaying, or creating them.
 - [x] Verify Vision source contains no `VNDetectFaceRectanglesRequest` and package tests cover the inactive legacy value.
-- [ ] Commit the removal with the local Vision test evidence.
+- [x] Commit the removal with the local Vision test evidence.
 
 ## Task 2: Complete local OCR and barcode confidence evidence
 
@@ -83,18 +83,18 @@ Before/after matching has a second local relationship record: `candidate`, `conf
 
 **Files:** new `VisualLearningModels.swift`, `VisualLearningProtocols.swift`, and domain tests.
 
-- [ ] Write failing tests for enum validation, bounded rationale, no-mutation authority, model/schema provenance, and legacy-safe Codable evolution.
-- [ ] Implement `PhotoAssessment`, `AssessmentEvidence`, `AssessmentReview`, `BeforeAfterRelationship`, `AssessmentFeedbackEvent`, and `VisualModelRevision`.
-- [ ] Make review decision states explicit: `unreviewed`, `accepted`, `corrected`, `rejected`, and `needsMoreContext`.
-- [ ] Verify all types forbid identity, biometrics, person names, raw image bytes, managed paths, prompts, and mutation closures.
-- [ ] Run `swift test --package-path Packages/FramebaseKit --filter VisualLearningModelTests`.
+- [x] Write failing tests for enum validation, bounded rationale, no-mutation authority, model/schema provenance, and legacy-safe Codable evolution.
+- [x] Implement `PhotoAssessment`, `AssessmentEvidence`, `AssessmentReview`, `BeforeAfterRelationship`, `AssessmentFeedbackEvent`, and `VisualModelRevision`.
+- [x] Make review decision states explicit: `unreviewed`, `accepted`, `corrected`, `rejected`, and `needsMoreContext`.
+- [x] Verify all types forbid identity, biometrics, person names, raw image bytes, managed paths, prompts, and mutation closures.
+- [x] Run `swift test --package-path Packages/FramebaseKit --filter VisualLearningModelTests`.
 
 ## Task 4: Add local catalog review history and a non-destructive review UI
 
 **Files:** catalog migration/repository/tests, `LibraryWindowModel.swift`, inspector, review UI, UI tests.
 
-- [ ] Write migration/reopen tests before implementation. Migration v9 must be additive and include assessment provenance, human reviews, append-only feedback events, and candidate/confirmed/rejected relationships.
-- [ ] Enforce uniqueness/idempotency on asset, provider/model, schema, and derivative digest. Correcting a review appends an event; it does not overwrite the original assessment.
+- [x] Write migration/reopen tests before implementation. Migration v9 is additive and includes assessment provenance, human reviews, append-only feedback events, and candidate/confirmed/rejected relationships.
+- [x] Enforce uniqueness/idempotency on asset, provider/model, schema, and derivative digest. Correcting a review appends an event; it does not overwrite the original assessment.
 - [ ] Add an explicit inspector review card that shows model/schema/derivative provenance and lets Vincent accept, correct, or reject an assessment.
 - [ ] Add manual before/after confirmation and rejection actions. A candidate may never alter a folder, tag, album, name, rating, favorite, or Trash state.
 - [ ] Add terminal-only UI tests that snapshot these organization fields before and after assessment/review actions.
