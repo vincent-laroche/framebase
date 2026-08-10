@@ -672,7 +672,7 @@ final class LibraryWindowModel {
         do {
             let results = try await container.analyzeLocally(
                 assetIDs: selection,
-                kinds: Set(AnalysisKind.allCases)
+                kinds: AnalysisKind.activeLocalVisionKinds
             )
             guard selection == selectedAssetIDs else { return }
             selectedAnalysisResults = results

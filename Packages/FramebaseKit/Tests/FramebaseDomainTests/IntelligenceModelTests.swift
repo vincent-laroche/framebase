@@ -50,8 +50,8 @@ struct IntelligenceModelTests {
         #expect(!result.description.contains("PRIVATE OCR CONTENT"))
     }
 
-    @Test("Barcode details and anonymous face geometry round-trip without identity data")
-    func barcodeAndFacePayloadRoundTrip() throws {
+    @Test("Barcode details round-trip and legacy face payloads remain readable but inactive")
+    func barcodeAndLegacyFacePayloadRoundTrip() throws {
         let barcode = try BarcodeObservation(
             symbology: "QR",
             payload: "PRIVATE-BARCODE",
@@ -67,6 +67,7 @@ struct IntelligenceModelTests {
         for payload in payloads {
             #expect(try JSONDecoder().decode(AnalysisPayload.self, from: JSONEncoder().encode(payload)) == payload)
         }
+        #expect(!AnalysisKind.activeLocalVisionKinds.contains(.faceRegions))
     }
 
     @Test("Initial count-only payloads remain readable")

@@ -13,9 +13,9 @@ The existing development Worker is `framebase-api-dev`. This package does not as
 | Area | Recommended starting value | Approval required |
 | --- | --- | --- |
 | Environment | Existing development Worker and development data only | Yes |
-| Provider | Cloudflare AI Gateway in front of one provider/model selected by Vincent after its current privacy and price terms are reviewed | Yes — provider and model name |
+| Provider | Cloudflare AI Gateway in front of Anthropic Claude Sonnet; pin the exact dated model revision immediately before enablement so it remains replaceable | Partly — provider chosen; exact revision and current terms still required |
 | Input | A newly generated JPEG or PNG derivative no larger than 1,600 pixels on its longest edge; never the managed original | Yes |
-| Tasks | Manual caption, categories, detected objects, and embedding generation; OCR remains local-first | Yes |
+| Tasks | Manual caption, categories, detected objects, business-quality assessment, before/after candidates, hairline presentation assessment, and embedding generation; OCR remains local-first | Yes |
 | Payload retention | Provider retention disabled where offered; no prompt/response or image payload logging | Yes — confirm provider setting |
 | AI Gateway | Payload logging disabled; diagnostic events contain only opaque IDs, timing, status, model revision, and metered cost | Yes |
 | Rate/concurrency | At most 2 concurrent requests and 10 assets per minute per enrolled device | Yes |
@@ -39,6 +39,8 @@ Never sent, stored in AI logs, or included in API error text:
 - managed originals, storage paths, filenames, EXIF/GPS, OCR/barcode text, person identity, credentials, bearer URLs, or raw prompts/responses;
 - unbounded image data;
 - any data from a personal library until a separate per-library authorization is given.
+
+The assessment schema must not request face detection, person identity, biometric templates, age, gender, ethnicity, medical inferences, or any other sensitive-person inference. Hairline is a visual business/composition attribute only, never a biometric identifier. Before/after output is a candidate relationship that requires a human confirmation.
 
 ## Required implementation controls
 
@@ -78,7 +80,7 @@ Before enabling the first cloud request, the implementation must have these reve
 Reply with the approved values for each item, or explicitly decline/defer cloud intelligence:
 
 - Development-only target: approve / decline
-- Provider and exact model/revision:
+- Provider and exact model/revision: Anthropic Claude Sonnet selected; exact dated revision to pin before enablement:
 - Provider data-retention terms reviewed: yes / no
 - AI Gateway payload logging disabled: yes / no
 - Derivative format and 1,600px maximum: approve / change

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
-**Goal:** Add opt-in, provenance-rich local OCR and visual analysis first, then searchable intelligence without allowing a model result to silently organize a library.
+**Goal:** Add opt-in, provenance-rich local OCR and visual analysis first, then searchable intelligence without allowing a model result to silently organize a library. The detailed human-reviewed business-photo learning track is in `PHASE_6_VISUAL_PHOTO_INTELLIGENCE.md`.
 
 **Architecture:** A provider-neutral IntelligenceService owns typed requests/results and stores additive provenance records through IntelligenceRepository. The first provider is local Apple Vision operating on a bounded derivative off the main actor. Cloud vision, captions, embeddings, Vectorize, AI Gateway, and semantic search are later opt-in work packages with their own resource, privacy, and cost approval.
 
@@ -15,7 +15,7 @@
 - Process a bounded derivative, not an unrestricted original. Analysis records never retain derivative bytes.
 - Every result persists asset ID, kind, engine/provider, model or request revision, schema version, source derivative digest/size, timestamp, confidence, and stale state.
 - OCR and barcode content are private metadata. They may not appear in logs, analytics samples, public APIs, browser CORS, or error descriptions.
-- Anonymous face rectangles are allowed; person naming and identity are local-first and excluded from the first release.
+- Face detection, person naming, and identity recognition are excluded from Phase 6. Existing legacy face-region records remain decode-only so older catalogs can open safely.
 - Do not create AI Gateway, Vectorize, Queues, Workflows, Cloudflare bindings, Worker secrets, paid model accounts, or deployments without a separately approved resource/cost plan.
 - Use only synthetic fixtures until a distinct approval permits analysis of a real library.
 
@@ -23,7 +23,7 @@
 
 1. Phase 5 has signed Finder lifecycle, enumeration, materialization, offline, and relaunch evidence.
 2. A local Vision capability probe records supported request revisions and languages against synthetic images.
-3. Local OCR/barcode/document/anonymous-face result capture and structured OCR search pass before any cloud provider work.
+3. Local OCR/barcode/document result capture and structured OCR search pass before any cloud provider work.
 4. Before cloud intelligence, Vincent must approve the provider, derivative specification, retention, AI Gateway logging disablement, retry/rate policy, monthly spend ceiling, Vectorize namespace, migrations, Worker scopes, and rollback procedure.
 
 Vincent explicitly authorized the local-only Phase 6 foundation on 2026-08-10 before the Phase 5 signing exit gate. Tasks 1–4 may proceed against synthetic fixtures; the original Phase 5 gate remains mandatory for File Provider release evidence and all cloud intelligence remains separately gated.
@@ -36,9 +36,10 @@ Vincent explicitly authorized the local-only Phase 6 foundation on 2026-08-10 be
 | Packages/FramebaseKit/Sources/FramebaseDomain/IntelligenceProtocols.swift | Provider-neutral service and repository contracts. |
 | Packages/FramebaseKit/Sources/FramebaseCatalog/CatalogIntelligenceRepository.swift | Additive storage, observation, stale invalidation, and parameterized OCR lookup. |
 | Packages/FramebaseKit/Sources/FramebaseMedia/IntelligenceDerivativeProvider.swift | Fixed-size, checksum-addressed analysis derivative. |
-| Packages/FramebaseKit/Sources/FramebaseMedia/VisionIntelligenceService.swift | Local Vision OCR, barcode, document, and face-region adapter. |
+| Packages/FramebaseKit/Sources/FramebaseMedia/VisionIntelligenceService.swift | Local Vision OCR, barcode, and document adapter. |
 | App/LibraryWindowModel.swift and UI/Inspector/FoundationInspector.swift | Explicit Analyze action and provenance display. |
 | docs/PHASE_6_CLOUD_INTELLIGENCE_OPERATIONS.md | Development-only resource, privacy, cost, and rollback approval package. |
+| docs/phases/PHASE_6_VISUAL_PHOTO_INTELLIGENCE.md | Claude Sonnet assessment, feedback-learning, before/after, and hairline-presentation plan. |
 | Cloud/apps/api and Cloud/contracts | Deferred cloud contract after the separate resource approval. |
 
 ---
@@ -74,7 +75,7 @@ Expected: compile failure because the contracts are absent.
 
 - [x] **Step 3: Implement strict provider-neutral types**
 
-Start with ocr, barcode, document, and faceRegions. OCR lines include normalized rectangles and confidence; barcode results include symbology and payload; face regions are unnamed geometry. Provenance includes local engine, request revision, schema version, derivative SHA-256/dimension, timestamp, and locales. No type may hold a token, local path, original bytes, or mutation closure.
+Start with OCR, barcode, and document. OCR lines include normalized rectangles and confidence; barcode results include symbology and payload. Legacy face-region payloads may decode only to keep prior catalogs readable; no active request or UI may expose them. Provenance includes local engine, request revision, schema version, derivative SHA-256/dimension, timestamp, and locales. No type may hold a token, local path, original bytes, or mutation closure.
 
 - [x] **Step 4: Verify domain tests**
 
@@ -139,7 +140,7 @@ git commit -m "Add catalog intelligence provenance storage"
 - Create: Packages/FramebaseKit/Tests/FramebaseMediaTests/VisionIntelligenceServiceTests.swift
 - Create: Packages/FramebaseKit/Tests/FramebaseMediaTests/Fixtures/ with synthetic text and barcode images
 
-**Produces:** local-only OCR, barcode, document, and anonymous face-region analysis.
+**Produces:** local-only OCR, barcode, and document analysis.
 
 - [ ] **Step 1: Write the failing Vision test**
 
@@ -160,13 +161,13 @@ Expected: compile failure because the provider is absent.
 
 - [x] **Step 3: Implement the bounded derivative and requests**
 
-Generate a maximum 1600-pixel ImageIO derivative, hash it, and discard transient bytes after processing. Execute VNRecognizeTextRequest, VNDetectBarcodesRequest, document detection where supported, and VNDetectFaceRectanglesRequest. Capture actual request revision/language configuration. Run off the main actor and honor cancellation between requests.
+Generate a maximum 1600-pixel ImageIO derivative, hash it, and discard transient bytes after processing. Execute VNRecognizeTextRequest, VNDetectBarcodesRequest, and document detection where supported. Capture actual request revision/language configuration. Run off the main actor and honor cancellation between requests. Do not execute face detection.
 
-- [ ] **Step 4: Verify local analysis tests**
+- [x] **Step 4: Verify local analysis tests**
 
 Run: swift test --package-path Packages/FramebaseKit --filter VisionIntelligenceServiceTests
 
-Expected: PASS for text/geometry, barcode capture, empty result, cancellation, unsupported-request fallback, derivative bound, and provenance.
+Expected: PASS for text/geometry, QR/barcode payload capture, empty result, cancellation, unsupported-request fallback, derivative bound, and provenance.
 
 - [ ] **Step 5: Commit**
 

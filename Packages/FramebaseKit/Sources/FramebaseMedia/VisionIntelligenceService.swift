@@ -45,20 +45,9 @@ public actor VisionIntelligenceService: IntelligenceService {
                 }
                 results.append(try result(assetID: request.assetID, kind: .barcode, derivative: derivative, revision: visionRequest.revision, locales: [], payload: .barcode(count: observations.count, observations: observations)))
             case .faceRegions:
-                let visionRequest = VNDetectFaceRectanglesRequest()
-                try handler.perform([visionRequest])
-                let regions = try (visionRequest.results ?? []).map { observation in
-                    try FaceRegion(
-                        boundingBox: try NormalizedBoundingBox(
-                            x: observation.boundingBox.origin.x,
-                            y: observation.boundingBox.origin.y,
-                            width: observation.boundingBox.size.width,
-                            height: observation.boundingBox.size.height
-                        ),
-                        confidence: Double(observation.confidence)
-                    )
-                }
-                results.append(try result(assetID: request.assetID, kind: .faceRegions, derivative: derivative, revision: visionRequest.revision, locales: [], payload: .faceRegions(count: regions.count, regions: regions)))
+                // `faceRegions` remains decodable for existing result records,
+                // but is intentionally not an active Vision capability.
+                continue
             case .document:
                 let visionRequest = VNDetectDocumentSegmentationRequest()
                 try handler.perform([visionRequest])

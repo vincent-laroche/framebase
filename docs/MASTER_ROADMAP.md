@@ -419,7 +419,7 @@ The current Phase 1 entities remain valid. Later migrations add these concepts w
 
 - `OCRResult`: text, regions, language, engine, model/version, source derivative, confidence, and timestamps.
 - `AIResult`: task type, structured result, provider/model/version, prompt/schema version, cost metadata, confidence, review state, and provenance.
-- `Person` and `Face`: optional local-first identity grouping; face detection and person naming remain separate.
+- `VisualAssessment`: human-reviewed business-quality, photo-role, and hairline-presentation evidence; face detection, person naming, and identity grouping are excluded.
 - `EmbeddingReference`: Vectorize index, vector ID, model/version, dimensions, source derivative, and stale state.
 
 ### Automation and audit
@@ -683,13 +683,13 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 6 — OCR, intelligent metadata, and semantic search
 
-**Status:** Approved and planned. Local implementation begins only after the Phase 5 signed File Provider exit gate; see `docs/phases/PHASE_6_INTELLIGENCE_AND_SEMANTIC_SEARCH.md`.
+**Status:** Approved and in progress. The local OCR/barcode/document foundation is in review under an explicit sequencing exception; see `docs/phases/PHASE_6_INTELLIGENCE_AND_SEMANTIC_SEARCH.md` and `docs/phases/PHASE_6_VISUAL_PHOTO_INTELLIGENCE.md`.
 
 **User-visible outcome:** Framebase can read text, describe and classify images, group related material, and answer semantic searches while retaining provenance and privacy controls.
 
 ### Scope
 
-- Add local Apple Vision OCR, barcode/document detection, and face-region detection where supported.
+- Add local Apple Vision OCR, barcode, and document detection where supported. Face detection, person identification, and biometric recognition are excluded.
 - Add Core ML adapters for models that are demonstrably useful locally.
 - Store OCR regions/text with engine and version provenance.
 - Add a provider-neutral `IntelligenceService` and typed analysis tasks.
@@ -699,7 +699,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 - Generate versioned embeddings and store them in Vectorize using catalog/library namespaces.
 - Combine structured D1 filters with Vectorize similarity results.
 - Add “similar to this,” natural-language search, OCR search, and explicit result provenance.
-- Keep person naming and face identity local-first and opt-in.
+- Add a human-reviewed visual learning loop for business quality, before/after candidates, and hairline presentation assessment. Claude Sonnet is the selected future assessment provider; it remains replaceable and separately privacy/cost-gated.
 
 ### Exit gate
 

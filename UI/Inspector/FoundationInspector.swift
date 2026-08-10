@@ -286,7 +286,7 @@ struct FoundationInspector: View {
                 Text("No local analysis has been run for this image.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(model.selectedAnalysisResults, id: \.id) { result in
+                ForEach(model.selectedAnalysisResults.filter { $0.kind != .faceRegions }, id: \.id) { result in
                     Divider()
                     Text("Local analysis provenance")
                         .font(.caption)
@@ -325,7 +325,7 @@ struct FoundationInspector: View {
         .accessibilityIdentifier("inspector.analyzeLocally")
         .disabled(model.isAnalyzingSelection)
 
-        Text("Runs OCR, barcode, document, and anonymous face-region detection on this Mac. Framebase will not organize assets automatically.")
+        Text("Runs OCR, barcode, and document detection on this Mac. Framebase will not organize assets automatically.")
             .font(.caption)
             .foregroundStyle(.secondary)
     }
@@ -354,8 +354,8 @@ struct FoundationInspector: View {
             }
         case let .document(confidence):
             LabeledContent("Document confidence", value: confidence.formatted(.percent.precision(.fractionLength(0))))
-        case let .faceRegions(count, _):
-            LabeledContent("Anonymous face regions", value: count.formatted())
+        case .faceRegions:
+            EmptyView()
         }
     }
 
@@ -364,7 +364,7 @@ struct FoundationInspector: View {
         case .ocr: "Recognized text"
         case .barcode: "Barcode detection"
         case .document: "Document detection"
-        case .faceRegions: "Face regions"
+        case .faceRegions: "Legacy face-region record"
         }
     }
 

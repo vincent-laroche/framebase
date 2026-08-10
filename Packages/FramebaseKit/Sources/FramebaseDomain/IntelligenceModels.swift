@@ -19,7 +19,11 @@ public enum AnalysisKind: String, Codable, CaseIterable, Hashable, Sendable {
     case ocr
     case barcode
     case document
+    /// Retained solely to decode prior local records. No current Framebase UI
+    /// or Vision request is allowed to create a face-region result.
     case faceRegions
+
+    public static let activeLocalVisionKinds: Set<AnalysisKind> = [.ocr, .barcode, .document]
 }
 
 public enum AnalysisStatus: String, Codable, Sendable {
@@ -148,7 +152,8 @@ public struct BarcodeObservation: Codable, Hashable, Sendable {
     }
 }
 
-/// A face rectangle without a name, biometric identifier, or grouping key.
+/// Legacy decode-only payload support for libraries created before face-region
+/// detection was removed from Phase 6. It is never requested or displayed.
 public struct FaceRegion: Codable, Hashable, Sendable {
     public let boundingBox: NormalizedBoundingBox
     public let confidence: Double
