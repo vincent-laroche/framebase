@@ -712,7 +712,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 7 — Durable visual workflows
 
-**Status:** Planned.
+**Status:** Approved for local contract and planner work. Queues, Workflows, bindings, credentials, and deployment remain separately approval-gated; see `docs/phases/PHASE_7_DURABLE_VISUAL_WORKFLOWS.md`.
 
 **User-visible outcome:** The user can build WHEN → IF → THEN automations, preview their exact effect, approve sensitive operations, and inspect or undo every run.
 
@@ -741,7 +741,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 8 — OpenAPI, CLI, and MCP agent platform
 
-**Status:** Planned.
+**Status:** Approved for local contract, CLI, and test-fixture work. Any remote agent identity, credential, MCP deployment, or public/private endpoint remains separately approval-gated; see `docs/phases/PHASE_8_OPENAPI_CLI_MCP.md`.
 
 **User-visible outcome:** Codex, Claude, scripts, and other trusted tools can search, inspect, organize, analyze, export, and run workflows through supported interfaces instead of UI automation.
 

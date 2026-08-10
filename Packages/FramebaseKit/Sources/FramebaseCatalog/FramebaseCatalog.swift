@@ -13,7 +13,8 @@ public enum FramebaseCatalogFoundation {
     public static let backupCloudParityMigrationIdentifier = "v7_backup_cloud_parity"
     public static let intelligenceMigrationIdentifier = "v8_local_intelligence"
     public static let visualLearningMigrationIdentifier = "v9_visual_learning_reviews"
-    public static let currentSchemaVersion = 9
+    public static let workflowMigrationIdentifier = "v10_durable_workflow_runs"
+    public static let currentSchemaVersion = 10
 
     public static func configure(_ configuration: inout Configuration) {
         configuration.foreignKeysEnabled = true
@@ -57,6 +58,7 @@ public final class CatalogDatabase: Sendable {
     public let backups: CatalogBackupManifestRepository
     public let intelligence: CatalogIntelligenceRepository
     public let visualLearning: CatalogVisualLearningRepository
+    public let workflows: CatalogWorkflowRepository
     public let cloud: CatalogCloudRepository
 
     let databasePool: DatabasePool
@@ -100,6 +102,7 @@ public final class CatalogDatabase: Sendable {
         self.backups = CatalogBackupManifestRepository(databasePool: pool)
         self.intelligence = CatalogIntelligenceRepository(databasePool: pool)
         self.visualLearning = CatalogVisualLearningRepository(databasePool: pool)
+        self.workflows = CatalogWorkflowRepository(databasePool: pool)
         self.cloud = CatalogCloudRepository(databasePool: pool)
     }
 
@@ -485,6 +488,55 @@ public final class CatalogDatabase: Sendable {
                 CREATE INDEX before_after_relationships_asset_index ON before_after_relationships(before_asset_id, after_asset_id, status);
                 """)
             try db.execute(sql: "UPDATE catalog_settings SET value = '9', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.workflowMigrationIdentifier) { db in
+            try db.execute(sql: """
+                CREATE TABLE workflow_definitions (
+                    id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+                    schema_version INTEGER NOT NULL CHECK(schema_version > 0),
+                    definition_json TEXT NOT NULL CHECK(json_valid(definition_json)),
+                    is_enabled INTEGER NOT NULL CHECK(is_enabled IN (0, 1)),
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                CREATE TABLE workflow_runs (
+                    id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+                    definition_id TEXT NOT NULL REFERENCES workflow_definitions(id) ON DELETE RESTRICT,
+                    idempotency_key TEXT NOT NULL UNIQUE CHECK(length(idempotency_key) = 64),
+                    state TEXT NOT NULL CHECK(state IN ('queued', 'awaitingApproval', 'running', 'succeeded', 'failed', 'cancelled', 'stale')),
+                    snapshot_catalog_revision INTEGER NOT NULL CHECK(snapshot_catalog_revision >= 0),
+                    plan_json TEXT NOT NULL CHECK(json_valid(plan_json)),
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX workflow_runs_definition_created_index ON workflow_runs(definition_id, created_at_ms DESC);
+                CREATE TABLE workflow_step_runs (
+                    id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+                    workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL CHECK(sequence > 0),
+                    action_json TEXT NOT NULL CHECK(json_valid(action_json)),
+                    target_asset_ids_json TEXT NOT NULL CHECK(json_valid(target_asset_ids_json)),
+                    state TEXT NOT NULL CHECK(state IN ('queued', 'awaitingApproval', 'running', 'succeeded', 'failed', 'cancelled', 'stale')),
+                    UNIQUE(workflow_run_id, sequence)
+                );
+                CREATE TABLE workflow_proposals (
+                    id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+                    workflow_run_id TEXT NOT NULL UNIQUE REFERENCES workflow_runs(id) ON DELETE CASCADE,
+                    plan_json TEXT NOT NULL CHECK(json_valid(plan_json)),
+                    state TEXT NOT NULL CHECK(state IN ('draft', 'awaitingApproval', 'approved', 'rejected', 'stale')),
+                    created_at_ms INTEGER NOT NULL
+                );
+                CREATE TABLE workflow_audit_events (
+                    id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+                    workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL CHECK(kind IN ('planCreated', 'proposalCreated', 'approvalGranted', 'approvalRejected', 'executionStarted', 'executionSucceeded', 'executionFailed', 'runCancelled', 'snapshotMarkedStale')),
+                    actor TEXT NOT NULL CHECK(actor IN ('human', 'workflow', 'agent', 'system')),
+                    summary TEXT NOT NULL CHECK(length(summary) BETWEEN 1 AND 512),
+                    captured_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX workflow_audit_events_run_captured_index ON workflow_audit_events(workflow_run_id, captured_at_ms ASC, id ASC);
+                """)
+            try db.execute(sql: "UPDATE catalog_settings SET value = '10', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
         }
         return migrator
     }

@@ -32,4 +32,16 @@ describe('versioned API contract', () => {
     const operations = contract.components.schemas.MutationOperation.properties.type.enum;
     expect(operations).toEqual(expect.arrayContaining(['create_tag', 'add_tag_to_assets', 'create_saved_search']));
   });
+
+  it('keeps the Phase 8 preview vocabulary proposal-first and excludes unsafe capabilities', () => {
+    const schemas = contract.components.schemas;
+    const scopes = schemas.AgentScope.enum;
+    const operations = schemas.AgentOperationKind.enum;
+    expect(scopes).toEqual(expect.arrayContaining(['library.read', 'assets.organize', 'intelligence.run']));
+    expect(operations).toEqual(expect.arrayContaining(['searchAssets', 'moveAssets', 'runWorkflow']));
+    expect(operations).not.toContain('permanentPurge');
+    expect(operations).not.toContain('rawStorageAccess');
+    expect(schemas.AgentOperationRequest.required).toEqual(['id', 'operation', 'targetAssetIds', 'catalogRevision']);
+    expect(schemas.AgentApprovalToken.required).toEqual(['id', 'operationId', 'targetAssetIds', 'catalogRevision', 'expiresAt']);
+  });
 });

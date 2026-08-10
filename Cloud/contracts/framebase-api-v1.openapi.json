@@ -234,6 +234,116 @@
           }
         }
       },
+      "AgentScope": {
+        "type": "string",
+        "enum": [
+          "library.read",
+          "assets.metadata.write",
+          "assets.organize",
+          "intelligence.run",
+          "workflows.run",
+          "exports.read"
+        ],
+        "description": "Preview-only Phase 8 scope vocabulary. Remote identities and endpoints are not deployed."
+      },
+      "AgentOperationKind": {
+        "type": "string",
+        "enum": [
+          "searchAssets",
+          "getAsset",
+          "getMetadata",
+          "listFolders",
+          "createFolder",
+          "moveAssets",
+          "renameAsset",
+          "setRating",
+          "addTags",
+          "addToAlbum",
+          "runOCR",
+          "analyzeAssets",
+          "runWorkflow",
+          "getOperation",
+          "downloadOriginal",
+          "exportAssets",
+          "diagnostics"
+        ],
+        "description": "Supported Phase 8 operation vocabulary. Permanent purge, arbitrary SQL, raw storage access, and credential operations are intentionally absent."
+      },
+      "AgentOperationRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "operation",
+          "targetAssetIds",
+          "catalogRevision"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/AgentOperationKind"
+          },
+          "targetAssetIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "uniqueItems": true
+          },
+          "catalogRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Operation-specific values. Adapters must not log these values."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Preview-only schema. A mutation is proposal-first and cannot apply without a matching approval token."
+      },
+      "AgentApprovalToken": {
+        "type": "object",
+        "required": [
+          "id",
+          "operationId",
+          "targetAssetIds",
+          "catalogRevision",
+          "expiresAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "targetAssetIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "uniqueItems": true
+          },
+          "catalogRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Binds a human approval to one exact reviewed operation, target set, and catalog revision."
+      },
       "MutationOperation": {
         "type": "object",
         "required": [
