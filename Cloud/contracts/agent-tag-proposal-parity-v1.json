@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "operation": "addTags",
+  "tagName": "review:strong",
+  "requiredScopes": [
+    "assets.metadata.write",
+    "workflows.run"
+  ],
+  "maximumTargets": 500,
+  "approvalLifetimeSeconds": 900,
+  "invariants": {
+    "proposalDoesNotMutateMembership": true,
+    "approvalBindsExactTargetSnapshot": true,
+    "duplicateApplyHasOneEffectiveMutation": true,
+    "preexistingMembershipIsPreserved": true,
+    "permanentPurgeIsUnavailable": true,
+    "rawStorageOrCredentialAccessIsUnavailable": true
+  }
+}

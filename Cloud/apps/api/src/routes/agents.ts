@@ -209,7 +209,7 @@ agentsRouter.post('/agents/:agentId/revoke', requireAuth('assets.organize'), asy
   return c.json({ identity: { ...publicIdentity(agent), status: 'revoked' } });
 });
 
-agentsRouter.post('/agent-operations/tag-proposals', requireAgentAuth('assets.metadata.write'), async (c) => {
+agentsRouter.post('/agent-operations/tag-proposals', requireAgentAuth('assets.metadata.write', 'workflows.run'), async (c) => {
   let body: { tagId?: unknown; targetAssetIds?: unknown; catalogRevision?: unknown };
   try { body = await c.req.json(); } catch { return apiError(c, 400, 'INVALID_REQUEST', 'Request body must be JSON'); }
   if (!isExactRecord(body, ['tagId', 'targetAssetIds', 'catalogRevision']) || typeof body.tagId !== 'string' || !ID.test(body.tagId)
@@ -261,7 +261,7 @@ agentsRouter.post('/agent-operations/:operationId/approve', requireAuth('assets.
   return c.json({ operationId: operation.id, approvalToken, expiresAt });
 });
 
-agentsRouter.post('/agent-operations/:operationId/apply', requireAgentAuth('assets.metadata.write'), async (c) => {
+agentsRouter.post('/agent-operations/:operationId/apply', requireAgentAuth('assets.metadata.write', 'workflows.run'), async (c) => {
   const operationID = c.req.param('operationId');
   const agentID = c.get('agentId');
   if (!ID.test(operationID) || !agentID) return apiError(c, 400, 'INVALID_REQUEST', 'operationId is invalid');

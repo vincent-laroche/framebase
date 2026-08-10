@@ -286,7 +286,7 @@
           "workflows.run",
           "exports.read"
         ],
-        "description": "Phase 8 delegated-agent scope vocabulary. The remote adapter is source-only until a separately approved deployment."
+        "description": "Phase 8 delegated-agent scope vocabulary. A tag workflow requires both assets.metadata.write and workflows.run; the remote adapter is source-only until a separately approved deployment."
       },
       "AgentIdentity": {
         "type": "object",

@@ -13,6 +13,7 @@ const DEFAULT_SCOPES = [
   'assets.import',
   'assets.metadata.write',
   'assets.organize',
+  'workflows.run',
   'library.preferences.write',
   'originals.download',
   'trash.write'

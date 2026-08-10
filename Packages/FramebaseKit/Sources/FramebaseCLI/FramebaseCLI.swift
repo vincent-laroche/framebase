@@ -50,7 +50,7 @@ public enum FramebaseCLI {
       framebase list-folders --catalog /path/to/catalog.sqlite
       framebase search --catalog /path/to/catalog.sqlite --text "query"
       framebase inspect --catalog /path/to/catalog.sqlite --asset UUID
-      framebase agent create --catalog /path/to/catalog.sqlite --name "Trusted script" --scope workflows.run --scope assets.organize
+      framebase agent create --catalog /path/to/catalog.sqlite --name "Trusted script" --scope workflows.run --scope assets.metadata.write
       framebase agent revoke --catalog /path/to/catalog.sqlite --agent UUID
       framebase proposal tag --catalog /path/to/catalog.sqlite --agent UUID --asset UUID [--asset UUID] --tag namespace:value
       framebase get-operation --catalog /path/to/catalog.sqlite --operation UUID
@@ -91,12 +91,12 @@ public enum FramebaseCLI {
             guard let identity = try await catalog.agentIdentities.identity(id: identityID) else { throw FramebaseCLIError.agentIdentityUnavailable }
             return try encode(AgentIdentityResponse(identity))
         case let .proposeTag(assetIDs, tagName, agentID):
-            let agent = try await activeAgent(id: agentID, requiring: [.workflowsRun, .assetsOrganize], catalog: catalog)
+            let agent = try await activeAgent(id: agentID, requiring: [.workflowsRun, .assetsMetadataWrite], catalog: catalog)
             return try await proposeTag(assetIDs: assetIDs, tagName: tagName, agent: agent, catalog: catalog)
         case let .getOperation(workflowRunID):
             return try await operationResponse(workflowRunID: workflowRunID, catalog: catalog)
         case let .apply(workflowRunID, approvalToken, agentID):
-            let agent = try await activeAgent(id: agentID, requiring: [.workflowsRun, .assetsOrganize], catalog: catalog)
+            let agent = try await activeAgent(id: agentID, requiring: [.workflowsRun, .assetsMetadataWrite], catalog: catalog)
             guard try await catalog.workflows.validateLocalCLIApprovalToken(workflowRunID: workflowRunID, token: approvalToken, agentIdentityID: agent.id) else {
                 throw FramebaseCLIError.invalidApprovalToken
             }

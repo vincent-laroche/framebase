@@ -20,7 +20,7 @@ async function seedTagAndAsset(env: Bindings): Promise<void> {
   await env.DB.prepare("INSERT INTO tags (id, name, revision) VALUES ('tag-agent', 'status:review', 1)").run();
 }
 
-async function createAgent(env: Bindings, ownerToken: string, scopes = ['library.read', 'assets.metadata.write']): Promise<CreatedAgent> {
+async function createAgent(env: Bindings, ownerToken: string, scopes = ['library.read', 'assets.metadata.write', 'workflows.run']): Promise<CreatedAgent> {
   const response = await app.request('/v1/agents', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` },
@@ -40,7 +40,7 @@ describe('remote agent proposal adapter', () => {
 
   beforeEach(async () => {
     env = createTestEnv();
-    ownerToken = await enrollDevice(env, 'agent-owner', ['library.read', 'assets.metadata.write', 'assets.organize']);
+    ownerToken = await enrollDevice(env, 'agent-owner', ['library.read', 'assets.metadata.write', 'assets.organize', 'workflows.run']);
     await seedTagAndAsset(env);
   });
 
@@ -49,7 +49,7 @@ describe('remote agent proposal adapter', () => {
     const stored = await env.DB.prepare('SELECT credential_hash, scopes_json FROM agent_identities WHERE id = ?')
       .bind(agent.identity.id).first<{ credential_hash: string; scopes_json: string }>();
     expect(stored?.credential_hash).not.toContain(agent.credential);
-    expect(JSON.parse(stored?.scopes_json ?? '[]')).toEqual(['assets.metadata.write', 'library.read']);
+    expect(JSON.parse(stored?.scopes_json ?? '[]')).toEqual(['assets.metadata.write', 'library.read', 'workflows.run']);
 
     const proposalResponse = await app.request('/v1/agent-operations/tag-proposals', {
       method: 'POST', headers: agentHeaders(agent),
@@ -112,6 +112,13 @@ describe('remote agent proposal adapter', () => {
       body: JSON.stringify({ tagId: 'tag-agent', targetAssetIds: ['asset-agent'], catalogRevision: 0 })
     }, env);
     expect(denied.status).toBe(403);
+
+    const metadataOnlyAgent = await createAgent(env, ownerToken, ['assets.metadata.write']);
+    const workflowDenied = await app.request('/v1/agent-operations/tag-proposals', {
+      method: 'POST', headers: agentHeaders(metadataOnlyAgent),
+      body: JSON.stringify({ tagId: 'tag-agent', targetAssetIds: ['asset-agent'], catalogRevision: 0 })
+    }, env);
+    expect(workflowDenied.status).toBe(403);
 
     const agent = await createAgent(env, ownerToken);
     const proposed = await app.request('/v1/agent-operations/tag-proposals', {

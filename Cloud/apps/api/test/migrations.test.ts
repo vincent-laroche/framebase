@@ -2,12 +2,13 @@ import initialMigration from '../migrations/0001_initial_schema.sql?raw';
 import idempotencyMigration from '../migrations/0002_idempotency_and_mutation_guards.sql?raw';
 import completeOrganizationMigration from '../migrations/0006_complete_organization.sql?raw';
 import agentOperationsMigration from '../migrations/0007_agent_operations.sql?raw';
+import workflowDeliveryMigration from '../migrations/0008_workflow_delivery.sql?raw';
 import { describe, expect, it } from 'vitest';
 import { createFakeD1 } from './fakes/d1.js';
 
 describe('D1 migrations', () => {
   it('creates a clean catalog schema and seeds exactly one Inbox', async () => {
-    const db = createFakeD1(`${initialMigration}\n${idempotencyMigration}\n${completeOrganizationMigration}\n${agentOperationsMigration}`);
+    const db = createFakeD1(`${initialMigration}\n${idempotencyMigration}\n${completeOrganizationMigration}\n${agentOperationsMigration}\n${workflowDeliveryMigration}`);
     const inboxes = await db.prepare("SELECT COUNT(*) AS count FROM folders WHERE id = 'system-inbox'").first<{ count: number }>();
     const fingerprintColumn = await db.prepare("SELECT request_fingerprint FROM idempotency_keys LIMIT 1").all();
     expect(inboxes?.count).toBe(1);
@@ -18,5 +19,7 @@ describe('D1 migrations', () => {
     expect(eventType.success).toBe(true);
     const agentTable = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_operations'").first<{ name: string }>();
     expect(agentTable?.name).toBe('agent_operations');
+    const deliveryTable = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workflow_delivery_dispatches'").first<{ name: string }>();
+    expect(deliveryTable?.name).toBe('workflow_delivery_dispatches');
   });
 });

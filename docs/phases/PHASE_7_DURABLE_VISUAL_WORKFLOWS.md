@@ -57,15 +57,15 @@
 
 ## Task 5: Add cloud durability only after a separate resource approval
 
-- [ ] Map the same run/step state to Queue messages and a Workflow orchestration adapter.
-- [ ] Configure dead-letter handling, retry/backoff, scoped auth, and no-sensitive-payload logging.
-- [ ] Run synthetic interruption, duplicate-delivery, approval-pause/resume, and dead-letter recovery proofs.
+- [x] Add a source-only delivery outbox adapter that maps a single approved `addTags` operation record to one versioned, opaque Queue message (`dispatchId`, `operationId`, attempt). It has no Worker binding or route, and migration `0008_workflow_delivery.sql` has not been applied remotely.
+- [x] Model durable pause/resume, queue outage recovery, bounded retry, terminal dead-letter state, and explicit owner-initiated dead-letter recovery. The message contains no asset/tag IDs, approval token, filename, model result, or raw media; the future consumer must resolve every detail from D1 after a trusted delivery.
+- [x] Run synthetic interruption, duplicate-delivery, approval-pause/resume, queue-outage, and dead-letter recovery proofs in `test/workflowDelivery.test.ts`. This is an injected local queue adapter, not evidence of a deployed Cloudflare Queue/Workflow/DLQ.
 - [ ] Obtain explicit approval before creating resources, setting bindings/secrets, applying migrations, or deploying.
 
 ## Exit Checklist
 
 - [ ] Dry-run output equals later applied mutations or reports snapshot drift.
-- [ ] Duplicate delivery cannot duplicate a mutation.
-- [ ] Approval pause/resume is deterministic and observable.
+- [x] The source-only delivery adapter acknowledges a duplicate after success without a second executor call; eventual production execution must reuse the same idempotent mutation receipt.
+- [x] Source-only approval pause/resume is deterministic and evented; no queued message is emitted before approval.
 - [ ] Runs, costs, evidence, retries, and actor attribution are queryable locally.
 - [ ] No workflow can permanently purge or bypass a review/proposal gate.

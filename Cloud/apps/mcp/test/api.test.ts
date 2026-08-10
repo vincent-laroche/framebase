@@ -1,9 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FramebaseAgentAPI, FramebaseMcpError } from '../src/api.js';
+import agentTagParity from '../../contracts/agent-tag-proposal-parity-v1.json';
 
 const credential = '550e8400-e29b-41d4-a716-446655440000.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 describe('Framebase MCP HTTP adapter', () => {
+  it('uses the same bounded tag proposal fixture as the CLI and HTTP contract', () => {
+    expect(agentTagParity.operation).toBe('addTags');
+    expect(agentTagParity.requiredScopes).toEqual(['assets.metadata.write', 'workflows.run']);
+    expect(agentTagParity.maximumTargets).toBe(500);
+    expect(agentTagParity.approvalLifetimeSeconds).toBe(900);
+    expect(agentTagParity.invariants.approvalBindsExactTargetSnapshot).toBe(true);
+    expect(agentTagParity.invariants.rawStorageOrCredentialAccessIsUnavailable).toBe(true);
+  });
+
   it('maps proposal, inspection, and exact apply to the remote agent contract without logging credential values', async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ operation: { id: 'op-1', operation: 'addTags', status: 'proposed', targetAssetIds: ['asset-1'], catalogRevision: 7, tagId: 'tag-1', createdAt: '2026-08-10T00:00:00Z', updatedAt: '2026-08-10T00:00:00Z', expiresAt: null, result: null } }), { status: 200 }))

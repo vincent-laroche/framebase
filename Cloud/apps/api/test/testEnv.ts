@@ -5,13 +5,14 @@ import multipartUploadMigration from '../migrations/0004_resumable_multipart_upl
 import catalogReconciliationMigration from '../migrations/0005_catalog_reconciliation_metadata.sql?raw';
 import completeOrganizationMigration from '../migrations/0006_complete_organization.sql?raw';
 import agentOperationsMigration from '../migrations/0007_agent_operations.sql?raw';
+import workflowDeliveryMigration from '../migrations/0008_workflow_delivery.sql?raw';
 import type { Bindings } from '../src/types.js';
 import { createFakeD1 } from './fakes/d1.js';
 import { createFakeR2 } from './fakes/r2.js';
 
 export function createTestEnv(): Bindings {
   return {
-    DB: createFakeD1(`${initialMigration}\n${idempotencyMigration}\n${keypairEnrollmentMigration}\n${multipartUploadMigration}\n${catalogReconciliationMigration}\n${completeOrganizationMigration}\n${agentOperationsMigration}`),
+    DB: createFakeD1(`${initialMigration}\n${idempotencyMigration}\n${keypairEnrollmentMigration}\n${multipartUploadMigration}\n${catalogReconciliationMigration}\n${completeOrganizationMigration}\n${agentOperationsMigration}\n${workflowDeliveryMigration}`),
     BLOBS: createFakeR2(),
     JWT_SECRET: 'contract-test-only-secret-do-not-reuse',
     ENROLLMENT_SECRET: 'contract-test-only-enrollment-secret',

@@ -1,4 +1,5 @@
 import contract from '../../contracts/framebase-api-v1.openapi.json';
+import agentTagParity from '../../contracts/agent-tag-proposal-parity-v1.json';
 import { describe, expect, it } from 'vitest';
 
 const DOCUMENTED_ROUTE_METHODS: Record<string, string[]> = {
@@ -77,5 +78,16 @@ describe('versioned API contract', () => {
     expect(schemas.AgentOperationRequest.additionalProperties).toBe(false);
     expect(schemas.AgentApprovalToken.additionalProperties).toBe(false);
     expect(schemas.AgentIdentity.additionalProperties).toBe(false);
+  });
+
+  it('keeps the remote scope boundary aligned with the shared tag proposal fixture', () => {
+    expect(agentTagParity.operation).toBe('addTags');
+    expect(agentTagParity.requiredScopes).toEqual(['assets.metadata.write', 'workflows.run']);
+    expect(agentTagParity.maximumTargets).toBe(500);
+    expect(agentTagParity.approvalLifetimeSeconds).toBe(900);
+    expect(agentTagParity.invariants.proposalDoesNotMutateMembership).toBe(true);
+    expect(agentTagParity.invariants.permanentPurgeIsUnavailable).toBe(true);
+    expect(contract.components.schemas.AgentScope.enum).toEqual(expect.arrayContaining(agentTagParity.requiredScopes));
+    expect(contract.components.schemas.AgentOperationKind.enum).toContain(agentTagParity.operation);
   });
 });

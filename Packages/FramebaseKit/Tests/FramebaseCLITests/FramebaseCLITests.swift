@@ -7,6 +7,32 @@ import Testing
 
 @Suite("Framebase local CLI")
 struct FramebaseCLITests {
+    @Test("CLI uses the shared cross-surface tag proposal fixture")
+    func sharedTagProposalFixture() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+        let repositoryRoot = sourceURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let fixtureURL = repositoryRoot.appending(path: "Cloud/contracts/agent-tag-proposal-parity-v1.json", directoryHint: .notDirectory)
+        let fixture = try JSONDecoder().decode(SharedTagProposalFixture.self, from: Data(contentsOf: fixtureURL))
+
+        #expect(fixture.schemaVersion == 1)
+        #expect(fixture.operation == "addTags")
+        #expect(fixture.tagName == "review:strong")
+        #expect(fixture.requiredScopes == ["assets.metadata.write", "workflows.run"])
+        #expect(fixture.maximumTargets == 500)
+        #expect(fixture.approvalLifetimeSeconds == 900)
+        #expect(fixture.invariants.proposalDoesNotMutateMembership)
+        #expect(fixture.invariants.approvalBindsExactTargetSnapshot)
+        #expect(fixture.invariants.duplicateApplyHasOneEffectiveMutation)
+        #expect(fixture.invariants.preexistingMembershipIsPreserved)
+        #expect(fixture.invariants.permanentPurgeIsUnavailable)
+        #expect(fixture.invariants.rawStorageOrCredentialAccessIsUnavailable)
+    }
+
     @Test("Read-only diagnostics, folders, and search return machine-readable catalog metadata")
     func readOnlyCommands() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "FramebaseCLITests-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -52,7 +78,7 @@ struct FramebaseCLITests {
         try await catalog.insertAsset(asset)
         let identityJSON = try await FramebaseCLI.execute(arguments: [
             "agent", "create", "--catalog", catalogURL.path, "--name", "Fixture agent",
-            "--scope", "workflows.run", "--scope", "assets.organize"
+            "--scope", "workflows.run", "--scope", "assets.metadata.write"
         ])
         let identity = try JSONDecoder().decode(CLIAgentIdentity.self, from: Data(identityJSON.utf8))
 
@@ -73,7 +99,7 @@ struct FramebaseCLITests {
 
         let otherIdentityJSON = try await FramebaseCLI.execute(arguments: [
             "agent", "create", "--catalog", catalogURL.path, "--name", "Other fixture agent",
-            "--scope", "workflows.run", "--scope", "assets.organize"
+            "--scope", "workflows.run", "--scope", "assets.metadata.write"
         ])
         let otherIdentity = try JSONDecoder().decode(CLIAgentIdentity.self, from: Data(otherIdentityJSON.utf8))
 
@@ -114,3 +140,22 @@ private struct CLIOperation: Decodable {
 
 private struct CLIAgentIdentity: Decodable { let id: String }
 private struct CLIAuditEvent: Decodable { let agentIdentityID: String?; let originatingTool: String? }
+
+private struct SharedTagProposalFixture: Decodable {
+    let schemaVersion: Int
+    let operation: String
+    let tagName: String
+    let requiredScopes: [String]
+    let maximumTargets: Int
+    let approvalLifetimeSeconds: Int
+    let invariants: Invariants
+
+    struct Invariants: Decodable {
+        let proposalDoesNotMutateMembership: Bool
+        let approvalBindsExactTargetSnapshot: Bool
+        let duplicateApplyHasOneEffectiveMutation: Bool
+        let preexistingMembershipIsPreserved: Bool
+        let permanentPurgeIsUnavailable: Bool
+        let rawStorageOrCredentialAccessIsUnavailable: Bool
+    }
+}

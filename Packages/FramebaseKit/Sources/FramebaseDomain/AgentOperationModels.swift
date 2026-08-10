@@ -115,9 +115,9 @@ public struct AgentOperationRequest: Codable, Hashable, Sendable, CustomStringCo
         switch operation {
         case .searchAssets, .getAsset, .getMetadata, .listFolders, .getOperation, .diagnostics:
             .libraryRead
-        case .createFolder, .moveAssets, .renameAsset, .addTags, .addToAlbum:
+        case .createFolder, .moveAssets, .renameAsset, .addToAlbum:
             .assetsOrganize
-        case .setRating:
+        case .setRating, .addTags:
             .assetsMetadataWrite
         case .runOCR, .analyzeAssets:
             .intelligenceRun
