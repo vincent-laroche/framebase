@@ -74,6 +74,35 @@ struct LibraryWindowView: View {
         }
         .toolbar {
             ToolbarItemGroup {
+                Menu {
+                    if let active = model.container.activeLibrary {
+                        Text("Current: \(active.displayName)")
+                    }
+                    ForEach(model.container.knownLibraries) { library in
+                        Button {
+                            Task { await model.container.switchToLibrary(library) }
+                        } label: {
+                            Label(
+                                library.displayName,
+                                systemImage: library.catalogID == model.container.activeLibrary?.catalogID ? "checkmark.circle.fill" : "photo.on.rectangle"
+                            )
+                        }
+                        .disabled(library.catalogID == model.container.activeLibrary?.catalogID)
+                    }
+                    Divider()
+                    Button("Create HSC Library") {
+                        Task { await model.container.createLibrary(for: .hairSolutions) }
+                    }
+                    if !model.container.knownLibraries.contains(where: { $0.space == .personal }) {
+                        Button("Create Personal Library") {
+                            Task { await model.container.createLibrary(for: .personal) }
+                        }
+                    }
+                } label: {
+                    Label(model.container.activeLibrary?.displayName ?? "Libraries", systemImage: "rectangle.3.group")
+                }
+                .accessibilityIdentifier("toolbar.libraries")
+
                 Button {
                     model.requestImport()
                 } label: {

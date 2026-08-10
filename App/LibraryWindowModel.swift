@@ -910,6 +910,8 @@ final class LibraryWindowModel {
         albumObservationTask = nil
         tagObservationTask = nil
 
+        resetTransientLibraryState()
+
         guard case .ready = container.libraryState,
               let folderRepository = container.folderRepository,
               let albumRepository = container.albumRepository else {
@@ -969,6 +971,38 @@ final class LibraryWindowModel {
                 savedSearches = searches
             }
         }
+    }
+
+    private func resetTransientLibraryState() {
+        observationTask?.cancel()
+        observationTask = nil
+        cancelThumbnailWork(clearStates: true)
+        navigationTarget = .allAssets
+        assetFilter = AssetFilter()
+        searchText = ""
+        recognizedTextSearch = ""
+        orderedVisibleAssetIDs = []
+        assetGridRecords = []
+        selectedAssetIDs = []
+        selectedAssets = []
+        selectedAnalysisResults = []
+        selectedPhotoAssessments = []
+        selectedAssessmentReviews = [:]
+        selectedBeforeAfterRelationships = []
+        selectedTags = []
+        selectedDuplicateCandidate = nil
+        selectedTrashReceipts = []
+        selectionAnchorID = nil
+        keyboardFocusedAssetID = nil
+        pendingFolderDeletion = nil
+        hairSolutionsTemplatePreview = nil
+        workflowTagPreview = nil
+        workflowTagFailureMessage = nil
+        workflowTagUndo = nil
+        undoHistory = []
+        redoHistory = []
+        importProgress = nil
+        isImporting = false
     }
 
     func createFolder(in parentFolderID: FolderID?) async {

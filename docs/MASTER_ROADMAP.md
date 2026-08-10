@@ -32,7 +32,7 @@ Nothing is “complete” without its phase exit gate. Phase completion never me
 
 ## Product definition
 
-Framebase is a Mac-first, cloud-backed visual asset operating system for one private library. It combines:
+Framebase is a Mac-first, cloud-backed visual asset operating system for separately scoped private libraries. It combines:
 
 - Finder's folder hierarchy and native file interaction.
 - Immich's visual browsing and intelligent indexing.
@@ -69,6 +69,16 @@ Framebase reaches its intended personal-product scope when it can:
 - Protect private media, credentials, and originals even when automation makes a mistake.
 
 Commercial multi-tenancy, social sharing, and a consumer mobile application are not required for this personal app.
+
+### Library-space isolation
+
+Vincent's Personal Library and Hair Solutions Co. Library are distinct Framebase
+library spaces, not folders, albums, tags, or views of one catalog. Each has an
+independent catalog ID, immutable-original store, local sync/outbox state,
+credentials, workflow/audit evidence, and eventual private cloud resources.
+Framebase must not search, organize, analyze, upload, or grant agent access
+across library spaces. See `docs/phases/PHASE_9_LIBRARY_SPACES.md` for the
+active local and cloud-separation implementation plan.
 
 ## Current baseline — Phase 1 implemented locally
 

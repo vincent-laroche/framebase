@@ -60,6 +60,13 @@ struct LibraryPackageLayout: Equatable, Sendable {
         }
         return picturesURL.appendingPathComponent(defaultPackageName, isDirectory: true)
     }
+
+    static func rootURL(for space: LibrarySpace, fileManager: FileManager = .default) throws -> URL {
+        guard let picturesURL = fileManager.urls(for: .picturesDirectory, in: .userDomainMask).first else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return picturesURL.appendingPathComponent(space.packageName, isDirectory: true)
+    }
 }
 
 actor LibraryPackageCoordinator {

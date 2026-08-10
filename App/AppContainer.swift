@@ -6,6 +6,85 @@ import FramebaseSync
 import Foundation
 import Observation
 
+enum LibrarySpace: String, Codable, CaseIterable, Hashable, Sendable {
+    case personal
+    case hairSolutions
+
+    var displayName: String {
+        switch self {
+        case .personal: "Personal Library"
+        case .hairSolutions: "HSC Library"
+        }
+    }
+
+    var packageName: String {
+        "\(displayName).framebase"
+    }
+
+    static func inferred(from rootURL: URL) -> LibrarySpace? {
+        allCases.first { $0.packageName == rootURL.lastPathComponent }
+    }
+}
+
+struct LibraryDescriptor: Codable, Hashable, Identifiable, Sendable {
+    let catalogID: CatalogID
+    let displayName: String
+    let space: LibrarySpace
+    let rootPath: String
+
+    var id: CatalogID { catalogID }
+    var rootURL: URL { URL(fileURLWithPath: rootPath, isDirectory: true) }
+
+    init(catalogID: CatalogID, displayName: String, space: LibrarySpace, rootURL: URL) {
+        self.catalogID = catalogID
+        self.displayName = displayName
+        self.space = space
+        self.rootPath = rootURL.standardizedFileURL.path
+    }
+}
+
+@MainActor
+struct LibraryRegistry {
+    private static let knownLibrariesKey = "framebase.knownLibraries.v1"
+
+    let preferences: UserDefaults
+
+    func load() -> [LibraryDescriptor] {
+        guard let data = preferences.data(forKey: Self.knownLibrariesKey),
+              let libraries = try? JSONDecoder().decode([LibraryDescriptor].self, from: data) else {
+            return []
+        }
+        return libraries.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    func save(_ libraries: [LibraryDescriptor]) {
+        guard let data = try? JSONEncoder().encode(libraries) else { return }
+        preferences.set(data, forKey: Self.knownLibrariesKey)
+    }
+
+    func upserting(
+        catalogID: CatalogID,
+        rootURL: URL,
+        preferredSpace: LibrarySpace? = nil
+    ) -> [LibraryDescriptor] {
+        let path = rootURL.standardizedFileURL.path
+        var libraries = load()
+        let existing = libraries.first { $0.rootPath == path || $0.catalogID == catalogID }
+        let space = preferredSpace ?? existing?.space ?? .personal
+        let descriptor = LibraryDescriptor(
+            catalogID: catalogID,
+            displayName: preferredSpace?.displayName ?? existing?.displayName ?? LibrarySpace.personal.displayName,
+            space: space,
+            rootURL: rootURL
+        )
+        libraries.removeAll { $0.rootPath == path || $0.catalogID == catalogID }
+        libraries.append(descriptor)
+        libraries.sort { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+        save(libraries)
+        return libraries
+    }
+}
+
 @MainActor
 @Observable
 final class AppContainer {
@@ -18,6 +97,8 @@ final class AppContainer {
 
     private(set) var libraryState: LibraryState = .notConfigured
     private(set) var libraryRootURL: URL?
+    private(set) var activeLibrary: LibraryDescriptor?
+    private(set) var knownLibraries: [LibraryDescriptor] = []
     private(set) var cloudStatus = CloudLibraryStatus()
     private(set) var cloudConflicts: [SyncConflict] = []
     private(set) var isPreparingCloudMigration = false
@@ -44,6 +125,7 @@ final class AppContainer {
 
     init(preferences: UserDefaults = .standard) {
         self.preferences = preferences
+        self.knownLibraries = LibraryRegistry(preferences: preferences).load()
     }
 
     var canBrowseLibrary: Bool {
@@ -79,10 +161,13 @@ final class AppContainer {
         if let testPath = ProcessInfo.processInfo.environment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] {
             libraryState = .opening
             do {
-                let layout = try await libraryCoordinator.createLibrary(
-                    at: URL(fileURLWithPath: testPath, isDirectory: true)
+                let rootURL = URL(fileURLWithPath: testPath, isDirectory: true)
+                let layout = try await libraryCoordinator.createLibrary(at: rootURL)
+                try await activateLibrary(
+                    layout,
+                    persistSelection: false,
+                    preferredSpace: LibrarySpace.inferred(from: rootURL)
                 )
-                try await activateLibrary(layout, persistSelection: false)
             } catch {
                 libraryState = .failed(error.localizedDescription)
             }
@@ -103,7 +188,7 @@ final class AppContainer {
         do {
             let rootURL = try LibraryPackageLayout.defaultRootURL()
             let layout = try await libraryCoordinator.createLibrary(at: rootURL)
-            try await activateLibrary(layout)
+            try await activateLibrary(layout, preferredSpace: .personal)
         } catch {
             libraryState = .failed(error.localizedDescription)
         }
@@ -114,7 +199,39 @@ final class AppContainer {
 
         do {
             let layout = try await libraryCoordinator.openLibrary(at: rootURL)
-            try await activateLibrary(layout)
+            try await activateLibrary(layout, preferredSpace: LibrarySpace.inferred(from: rootURL))
+        } catch {
+            libraryState = .failed(error.localizedDescription)
+        }
+    }
+
+    func createLibrary(for space: LibrarySpace) async {
+        if let existingLibrary = knownLibraries.first(where: { $0.space == space }) {
+            await switchToLibrary(existingLibrary)
+            return
+        }
+
+        libraryState = .opening
+
+        do {
+            let rootURL = try LibraryPackageLayout.rootURL(for: space)
+            let layout = try await libraryCoordinator.createLibrary(at: rootURL)
+            try await activateLibrary(layout, preferredSpace: space)
+        } catch {
+            libraryState = .failed(error.localizedDescription)
+        }
+    }
+
+    func switchToLibrary(_ library: LibraryDescriptor) async {
+        guard library.rootURL.standardizedFileURL != libraryRootURL?.standardizedFileURL else { return }
+        libraryState = .opening
+
+        do {
+            let layout = try await libraryCoordinator.openLibrary(at: library.rootURL)
+            try await activateLibrary(
+                layout,
+                preferredSpace: LibrarySpace.inferred(from: library.rootURL) ?? library.space
+            )
         } catch {
             libraryState = .failed(error.localizedDescription)
         }
@@ -296,7 +413,11 @@ final class AppContainer {
         return storedResults
     }
 
-    private func activateLibrary(_ layout: LibraryPackageLayout, persistSelection: Bool = true) async throws {
+    private func activateLibrary(
+        _ layout: LibraryPackageLayout,
+        persistSelection: Bool = true,
+        preferredSpace: LibrarySpace? = nil
+    ) async throws {
         let catalog = try CatalogDatabase(catalogURL: layout.catalogDatabaseURL)
         let blobStore = try ManagedAssetBlobStore(
             originalsDirectoryURL: layout.originalsDirectoryURL,
@@ -340,6 +461,12 @@ final class AppContainer {
             cacheDirectoryURL: try Self.thumbnailCacheDirectoryURL()
         )
         libraryRootURL = layout.rootURL
+        knownLibraries = LibraryRegistry(preferences: preferences).upserting(
+            catalogID: catalog.catalogID,
+            rootURL: layout.rootURL,
+            preferredSpace: preferredSpace
+        )
+        activeLibrary = knownLibraries.first { $0.catalogID == catalog.catalogID }
         if persistSelection {
             preferences.set(layout.rootURL.path, forKey: Self.libraryRootPreferenceKey)
         }
