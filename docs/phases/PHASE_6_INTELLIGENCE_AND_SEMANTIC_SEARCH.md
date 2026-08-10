@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Do not start Phase 6 product code until Phase 5 signed File Provider exit evidence is complete; this plan is approved and sequenced, not parallel implementation authorization.
+- Do not start Phase 6 product code until Phase 5 signed File Provider exit evidence is complete, except for the explicitly approved 2026-08-10 local-only Tasks 1–4. That exception does not authorize a File Provider extension, cloud intelligence, personal-library analysis, or infrastructure changes.
 - Analysis is opt-in and non-destructive. It must never rename, move, tag, merge, delete, or otherwise mutate organization automatically.
 - Process a bounded derivative, not an unrestricted original. Analysis records never retain derivative bytes.
 - Every result persists asset ID, kind, engine/provider, model or request revision, schema version, source derivative digest/size, timestamp, confidence, and stale state.
@@ -25,6 +25,8 @@
 2. A local Vision capability probe records supported request revisions and languages against synthetic images.
 3. Local OCR/barcode/document/anonymous-face result capture and structured OCR search pass before any cloud provider work.
 4. Before cloud intelligence, Vincent must approve the provider, derivative specification, retention, AI Gateway logging disablement, retry/rate policy, monthly spend ceiling, Vectorize namespace, migrations, Worker scopes, and rollback procedure.
+
+Vincent explicitly authorized the local-only Phase 6 foundation on 2026-08-10 before the Phase 5 signing exit gate. Tasks 1–4 may proceed against synthetic fixtures; the original Phase 5 gate remains mandatory for File Provider release evidence and all cloud intelligence remains separately gated.
 
 ## File Map
 
@@ -49,7 +51,7 @@
 
 **Produces:** AssetAnalysisRequest, AssetAnalysisResult, AnalysisProvenance, AnalysisKind, AnalysisStatus, and IntelligenceService.
 
-- [ ] **Step 1: Write failing validation tests**
+- [x] **Step 1: Write failing validation tests**
 
 ~~~swift
 func testResultRequiresDerivativeDigestAndEngineRevision() throws {
@@ -63,23 +65,23 @@ func testRequestCannotContainCatalogMutation() {
 }
 ~~~
 
-- [ ] **Step 2: Confirm the tests fail**
+- [x] **Step 2: Confirm the tests fail**
 
 Run: swift test --package-path Packages/FramebaseKit --filter IntelligenceModelTests
 
 Expected: compile failure because the contracts are absent.
 
-- [ ] **Step 3: Implement strict provider-neutral types**
+- [x] **Step 3: Implement strict provider-neutral types**
 
 Start with ocr, barcode, document, and faceRegions. OCR lines include normalized rectangles and confidence; barcode results include symbology and payload; face regions are unnamed geometry. Provenance includes local engine, request revision, schema version, derivative SHA-256/dimension, timestamp, and locales. No type may hold a token, local path, original bytes, or mutation closure.
 
-- [ ] **Step 4: Verify domain tests**
+- [x] **Step 4: Verify domain tests**
 
 Run: swift test --package-path Packages/FramebaseKit --filter IntelligenceModelTests
 
 Expected: PASS for validation, Codable stability, no-mutation invariant, and redacted debug rendering.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ~~~bash
 git add Packages/FramebaseKit/Sources/FramebaseDomain Packages/FramebaseKit/Tests/FramebaseDomainTests
