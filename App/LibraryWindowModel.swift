@@ -722,6 +722,39 @@ final class LibraryWindowModel {
         }
     }
 
+    func recordAssessmentQualityCorrection(_ assessment: PhotoAssessment, quality: BusinessPhotoQuality) async {
+        guard selectedAssetIDs == Set([assessment.assetID]), let catalog = container.catalogDatabase else { return }
+        do {
+            let review = try AssessmentReview(
+                assessmentID: assessment.id,
+                assetID: assessment.assetID,
+                decision: .corrected,
+                correctedBusinessQuality: quality,
+                reviewedAt: .now
+            )
+            try await catalog.visualLearning.record(review)
+            try await catalog.visualLearning.record(
+                AssessmentFeedbackEvent(assessmentID: assessment.id, reviewID: review.id, outcome: .helpful, capturedAt: .now)
+            )
+            await refreshInspectorNow()
+            statusMessage = "Recorded your corrected business-quality label. Framebase did not organize this asset."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func recordBeforeAfterRelationship(beforeAssetID: AssetID, afterAssetID: AssetID, status: BeforeAfterRelationshipStatus) async {
+        guard selectedAssetIDs == Set([beforeAssetID, afterAssetID]), let catalog = container.catalogDatabase else { return }
+        do {
+            try await catalog.visualLearning.store(
+                BeforeAfterRelationship(beforeAssetID: beforeAssetID, afterAssetID: afterAssetID, status: status, createdAt: .now)
+            )
+            statusMessage = "Recorded the before/after review. Framebase did not organize either asset."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
     /// Previews a safe organization workflow without changing a tag, folder,
     /// album, rating, favorite, Trash state, or managed original.
     func prepareTagWorkflow(named rawTagName: String) async {

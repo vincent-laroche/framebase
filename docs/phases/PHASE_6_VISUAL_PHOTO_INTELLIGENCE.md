@@ -95,7 +95,8 @@ Before/after matching has a second local relationship record: `candidate`, `conf
 
 - [x] Write migration/reopen tests before implementation. Migration v9 is additive and includes assessment provenance, human reviews, append-only feedback events, and candidate/confirmed/rejected relationships.
 - [x] Enforce uniqueness/idempotency on asset, provider/model, schema, and derivative digest. Correcting a review appends an event; it does not overwrite the original assessment.
-- [x] Add the first inspector review card: it shows advisory business-quality, photo-role, hairline-presentation, confidence, and model values, then records accept/reject/needs-context feedback as append-only local evidence without organizing the asset.
+- [x] Add the first inspector review card: it shows advisory business-quality, photo-role, hairline-presentation, confidence, and model values; it records accept/reject/needs-context feedback or an explicitly corrected business-quality label as append-only local evidence without organizing the asset.
+- [x] Add an explicit two-asset before/after control: Vincent selects which asset is before, then confirms or rejects only that relationship; no catalog organization is changed.
 - [ ] Add an explicit inspector review card that shows model/schema/derivative provenance and lets Vincent accept, correct, or reject an assessment.
 - [ ] Add manual before/after confirmation and rejection actions. A candidate may never alter a folder, tag, album, name, rating, favorite, or Trash state.
 - [ ] Add terminal-only UI tests that snapshot these organization fields before and after assessment/review actions.

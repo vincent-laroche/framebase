@@ -6,6 +6,7 @@ struct FoundationInspector: View {
     let model: LibraryWindowModel
     @State private var proposedTagName = ""
     @State private var proposedDisplayName = ""
+    @State private var correctedBusinessQuality = BusinessPhotoQuality.needsReview
 
     var body: some View {
         Group {
@@ -170,6 +171,7 @@ struct FoundationInspector: View {
             Section("Local analysis") {
                 analysisControls
             }
+            beforeAfterReview(assets)
             trashRecoveryState
             tagEditor
         }
@@ -342,9 +344,41 @@ struct FoundationInspector: View {
                         }
                         .accessibilityIdentifier("assessment.reject")
                     }
+                    Picker("Correct business quality", selection: $correctedBusinessQuality) {
+                        ForEach(BusinessPhotoQuality.allCases, id: \.self) { quality in
+                            Text(quality.rawValue).tag(quality)
+                        }
+                    }
+                    Button("Record Correction") {
+                        Task { await model.recordAssessmentQualityCorrection(assessment, quality: correctedBusinessQuality) }
+                    }
+                    .accessibilityIdentifier("assessment.correct")
                     Text("Reviewing records feedback only; folders, tags, ratings, favorites, and originals remain unchanged.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func beforeAfterReview(_ assets: [Asset]) -> some View {
+        if assets.count == 2 {
+            Section("Before / after review") {
+                Text("Choose the before image explicitly. This records a relationship only; it never moves, tags, rates, or edits either asset.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(assets) { beforeAsset in
+                    let afterAsset = assets.first { $0.id != beforeAsset.id }!
+                    Menu("Set \(beforeAsset.displayName) as Before") {
+                        Button("Confirm Pair") {
+                            Task { await model.recordBeforeAfterRelationship(beforeAssetID: beforeAsset.id, afterAssetID: afterAsset.id, status: .confirmed) }
+                        }
+                        Button("Reject Pair", role: .destructive) {
+                            Task { await model.recordBeforeAfterRelationship(beforeAssetID: beforeAsset.id, afterAssetID: afterAsset.id, status: .rejected) }
+                        }
+                    }
+                    .accessibilityIdentifier("beforeAfter.choose.\(beforeAsset.id.description)")
                 }
             }
         }
