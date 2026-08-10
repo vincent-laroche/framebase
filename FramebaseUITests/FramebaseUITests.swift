@@ -345,6 +345,37 @@ final class FramebaseUITests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testVisualAssessmentReviewRecordsEvidenceWithoutOrganizingAsset() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-\(UUID().uuidString).framebase", isDirectory: true)
+        let sourceDirectoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-Sources-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectoryURL, withIntermediateDirectories: true)
+        let sourceURL = try writeJPEG(named: "assessment-sample.jpg", in: sourceDirectoryURL)
+        let app = XCUIApplication()
+        app.launchEnvironment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] = rootURL.path
+        app.launchEnvironment["FRAMEBASE_UI_TEST_IMPORT_SOURCES"] = sourceURL.path
+        app.launchEnvironment["FRAMEBASE_UI_TEST_SEED_VISUAL_ASSESSMENT"] = "1"
+        app.launch()
+        defer {
+            app.terminate()
+            try? FileManager.default.removeItem(at: rootURL)
+            try? FileManager.default.removeItem(at: sourceDirectoryURL)
+        }
+
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        let cell = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "asset.")).element(boundBy: 0)
+        XCTAssertTrue(cell.waitForExistence(timeout: 30))
+        cell.click()
+        let accept = app.buttons["assessment.accept"]
+        XCTAssertTrue(accept.waitForExistence(timeout: 10))
+        let beforeReview = assetOrganizationSnapshot(at: rootURL)
+        accept.click()
+        XCTAssertTrue(waitForVisualAssessmentReview(at: rootURL, timeout: 10))
+        XCTAssertEqual(assetOrganizationSnapshot(at: rootURL), beforeReview)
+    }
+
     /// Scaled fixture test (300+ assets) that verifies:
     /// 1) Grid thumbnail rendering under scale with real/synthetic images.
     /// 2) Command-A selects all assets and updates inspector to "Selection".
@@ -647,6 +678,25 @@ final class FramebaseUITests: XCTestCase {
             kinds.append(String(cString: text))
         }
         return kinds
+    }
+
+    @MainActor
+    private func waitForVisualAssessmentReview(at rootURL: URL, timeout: TimeInterval) -> Bool {
+        let catalogURL = rootURL.appendingPathComponent("Catalog", isDirectory: true).appendingPathComponent("catalog.sqlite", isDirectory: false)
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            var database: OpaquePointer?
+            if sqlite3_open_v2(catalogURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let database {
+                defer { sqlite3_close(database) }
+                var statement: OpaquePointer?
+                if sqlite3_prepare_v2(database, "SELECT COUNT(*) FROM visual_assessment_reviews", -1, &statement, nil) == SQLITE_OK, let statement {
+                    defer { sqlite3_finalize(statement) }
+                    if sqlite3_step(statement) == SQLITE_ROW, sqlite3_column_int64(statement, 0) == 1 { return true }
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < deadline
+        return false
     }
 
     @MainActor

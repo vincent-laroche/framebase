@@ -125,6 +125,8 @@ final class LibraryWindowModel {
     var selectedAssets: [Asset] = []
     var selectedAnalysisResults: [AssetAnalysisResult] = []
     var selectedPhotoAssessments: [PhotoAssessment] = []
+    var selectedAssessmentReviews: [UUID: [AssessmentReview]] = [:]
+    var selectedBeforeAfterRelationships: [BeforeAfterRelationship] = []
     var isAnalyzingSelection = false
     var inspectorSelectionIsLimited = false
     var inspectorPreviewState: AssetThumbnailState?
@@ -217,6 +219,10 @@ final class LibraryWindowModel {
 
             try await container.synchronizeCloudImportedAssets(Set(result.importedAssetIDs))
 
+#if DEBUG
+            try await seedSyntheticVisualAssessmentForUITestIfRequested(assetIDs: result.importedAssetIDs)
+#endif
+
             if result.cancelled {
                 statusMessage = "Import cancelled. No new assets were added."
             } else if !result.failures.isEmpty {
@@ -234,6 +240,30 @@ final class LibraryWindowModel {
     func cancelImport() async {
         await container.importCoordinator?.cancelCurrentImport()
     }
+
+#if DEBUG
+    /// UI tests opt into this generated fixture through an environment flag so
+    /// they exercise the app's repository path without a second SQLite writer.
+    private func seedSyntheticVisualAssessmentForUITestIfRequested(assetIDs: [AssetID]) async throws {
+        guard ProcessInfo.processInfo.environment["FRAMEBASE_UI_TEST_SEED_VISUAL_ASSESSMENT"] == "1",
+              let assetID = assetIDs.first,
+              let catalog = container.catalogDatabase else { return }
+        let assessment = try PhotoAssessment(
+            assetID: assetID,
+            businessQuality: .strong,
+            evidence: [.sharp],
+            photoRole: .afterCandidate,
+            hairlinePresentation: .clearlyVisible,
+            confidence: 0.9,
+            rationale: "Synthetic review fixture",
+            modelRevision: VisualModelRevision(provider: .local, modelIdentifier: "ui-fixture", assessmentSchemaVersion: 1),
+            derivativeSHA256: String(repeating: "a", count: 64),
+            derivativeMaximumPixelDimension: 1_600,
+            capturedAt: .now
+        )
+        try await catalog.visualLearning.store(assessment)
+    }
+#endif
 
     func undoLastAction() async {
         guard !container.cloudBackingIsActive else {
@@ -722,14 +752,21 @@ final class LibraryWindowModel {
         }
     }
 
-    func recordAssessmentQualityCorrection(_ assessment: PhotoAssessment, quality: BusinessPhotoQuality) async {
+    func recordAssessmentCorrection(
+        _ assessment: PhotoAssessment,
+        businessQuality: BusinessPhotoQuality,
+        photoRole: PhotoRole,
+        hairlinePresentation: HairlinePresentation
+    ) async {
         guard selectedAssetIDs == Set([assessment.assetID]), let catalog = container.catalogDatabase else { return }
         do {
             let review = try AssessmentReview(
                 assessmentID: assessment.id,
                 assetID: assessment.assetID,
                 decision: .corrected,
-                correctedBusinessQuality: quality,
+                correctedBusinessQuality: businessQuality == assessment.businessQuality ? nil : businessQuality,
+                correctedPhotoRole: photoRole == assessment.photoRole ? nil : photoRole,
+                correctedHairlinePresentation: hairlinePresentation == assessment.hairlinePresentation ? nil : hairlinePresentation,
                 reviewedAt: .now
             )
             try await catalog.visualLearning.record(review)
@@ -737,7 +774,7 @@ final class LibraryWindowModel {
                 AssessmentFeedbackEvent(assessmentID: assessment.id, reviewID: review.id, outcome: .helpful, capturedAt: .now)
             )
             await refreshInspectorNow()
-            statusMessage = "Recorded your corrected business-quality label. Framebase did not organize this asset."
+            statusMessage = "Recorded your corrected visual labels. Framebase did not organize this asset."
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -749,6 +786,7 @@ final class LibraryWindowModel {
             try await catalog.visualLearning.store(
                 BeforeAfterRelationship(beforeAssetID: beforeAssetID, afterAssetID: afterAssetID, status: status, createdAt: .now)
             )
+            await refreshInspectorNow()
             statusMessage = "Recorded the before/after review. Framebase did not organize either asset."
         } catch {
             statusMessage = error.localizedDescription
@@ -1099,6 +1137,8 @@ final class LibraryWindowModel {
         selectedAssets = []
         selectedAnalysisResults = []
         selectedPhotoAssessments = []
+        selectedAssessmentReviews = [:]
+        selectedBeforeAfterRelationships = []
         selectedTags = []
         selectedDuplicateCandidate = nil
         selectedTrashReceipts = []
@@ -1135,12 +1175,27 @@ final class LibraryWindowModel {
                     selectedDuplicateCandidate = candidates.first { $0.assetIDs.contains(asset.id) }
                     selectedAnalysisResults = try await catalog.intelligence.results(for: asset.id)
                     selectedPhotoAssessments = try await catalog.visualLearning.assessments(for: asset.id)
+                    selectedAssessmentReviews = try await withThrowingTaskGroup(of: (UUID, [AssessmentReview]).self) { group in
+                        for assessment in selectedPhotoAssessments {
+                            group.addTask {
+                                (assessment.id, try await catalog.visualLearning.reviews(for: assessment.id))
+                            }
+                        }
+                        var results: [UUID: [AssessmentReview]] = [:]
+                        for try await (assessmentID, reviews) in group {
+                            results[assessmentID] = reviews
+                        }
+                        return results
+                    }
+                    selectedBeforeAfterRelationships = try await catalog.visualLearning.relationships(for: asset.id)
                 }
             } else {
                 inspectorPreviewState = nil
                 selectedDuplicateCandidate = nil
                 selectedAnalysisResults = []
                 selectedPhotoAssessments = []
+                selectedAssessmentReviews = [:]
+                selectedBeforeAfterRelationships = []
             }
             selectedTrashReceipts = try await repository.trashReceipts(for: selection)
         } catch is CancellationError {

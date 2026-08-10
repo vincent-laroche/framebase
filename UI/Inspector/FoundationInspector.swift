@@ -7,6 +7,8 @@ struct FoundationInspector: View {
     @State private var proposedTagName = ""
     @State private var proposedDisplayName = ""
     @State private var correctedBusinessQuality = BusinessPhotoQuality.needsReview
+    @State private var correctedPhotoRole = PhotoRole.unclear
+    @State private var correctedHairlinePresentation = HairlinePresentation.unclear
 
     var body: some View {
         Group {
@@ -329,7 +331,26 @@ struct FoundationInspector: View {
                     LabeledContent("Photo role", value: assessment.photoRole.rawValue)
                     LabeledContent("Hairline presentation", value: assessment.hairlinePresentation.rawValue)
                     LabeledContent("Confidence", value: assessment.confidence.formatted(.percent.precision(.fractionLength(0))))
+                    LabeledContent("Provider", value: assessment.modelRevision.provider.rawValue)
                     LabeledContent("Model", value: assessment.modelRevision.modelIdentifier)
+                    LabeledContent("Assessment schema", value: assessment.modelRevision.assessmentSchemaVersion.formatted())
+                    LabeledContent("Derivative", value: "max \(assessment.derivativeMaximumPixelDimension) px")
+                    LabeledContent("Derivative SHA-256") {
+                        Text(assessment.derivativeSHA256)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    LabeledContent("Rationale", value: assessment.rationale)
+                    if let reviews = model.selectedAssessmentReviews[assessment.id], !reviews.isEmpty {
+                        LabeledContent("Review history", value: "\(reviews.count) recorded")
+                        ForEach(reviews, id: \.id) { review in
+                            Text("\(review.decision.rawValue) · \(formatted(review.reviewedAt))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     HStack {
                         Button("Accept") {
                             Task { await model.recordAssessmentReview(assessment, decision: .accepted) }
@@ -349,15 +370,52 @@ struct FoundationInspector: View {
                             Text(quality.rawValue).tag(quality)
                         }
                     }
+                    Picker("Correct photo role", selection: $correctedPhotoRole) {
+                        ForEach(PhotoRole.allCases, id: \.self) { role in
+                            Text(role.rawValue).tag(role)
+                        }
+                    }
+                    Picker("Correct hairline presentation", selection: $correctedHairlinePresentation) {
+                        ForEach(HairlinePresentation.allCases, id: \.self) { presentation in
+                            Text(presentation.rawValue).tag(presentation)
+                        }
+                    }
                     Button("Record Correction") {
-                        Task { await model.recordAssessmentQualityCorrection(assessment, quality: correctedBusinessQuality) }
+                        Task {
+                            await model.recordAssessmentCorrection(
+                                assessment,
+                                businessQuality: correctedBusinessQuality,
+                                photoRole: correctedPhotoRole,
+                                hairlinePresentation: correctedHairlinePresentation
+                            )
+                        }
                     }
                     .accessibilityIdentifier("assessment.correct")
+                    .disabled(
+                        correctedBusinessQuality == assessment.businessQuality &&
+                        correctedPhotoRole == assessment.photoRole &&
+                        correctedHairlinePresentation == assessment.hairlinePresentation
+                    )
                     Text("Reviewing records feedback only; folders, tags, ratings, favorites, and originals remain unchanged.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if !model.selectedBeforeAfterRelationships.isEmpty {
+                    Divider()
+                    Text("Related before / after evidence")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(model.selectedBeforeAfterRelationships, id: \.id) { relationship in
+                        LabeledContent("Relationship", value: relationship.status.rawValue)
+                    }
+                }
             }
+        }
+        .task(id: model.selectedPhotoAssessments) {
+            guard let assessment = model.selectedPhotoAssessments.first else { return }
+            correctedBusinessQuality = assessment.businessQuality
+            correctedPhotoRole = assessment.photoRole
+            correctedHairlinePresentation = assessment.hairlinePresentation
         }
     }
 
