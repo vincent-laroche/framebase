@@ -113,6 +113,34 @@ struct CatalogWorkflowRepositoryTests {
         #expect(try await database.workflows.auditEvents(for: run.id).map(\.kind) == [.planCreated, .proposalCreated, .approvalGranted, .executionStarted, .executionSucceeded])
     }
 
+    @Test("Undo removes only memberships created by the completed workflow")
+    func undoPreservesPreexistingTagMembership() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let addedByWorkflow = try makeAsset(parentFolderID: database.inboxID)
+        let alreadyTagged = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAsset(addedByWorkflow)
+        try await database.insertAsset(alreadyTagged)
+        let tag = try await database.tags.createTag(named: TagName("review:strong"))
+        try await database.tags.addTags([tag.id], to: [alreadyTagged.id])
+
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let definition = try WorkflowDefinition(name: "Mark review", trigger: .manualSelection, actions: [.proposeTag("review:strong")])
+        let snapshot = try await database.workflowInputSnapshot(assetIDs: [addedByWorkflow.id, alreadyTagged.id], capturedAt: date)
+        let plan = try WorkflowPlanner().plan(definition: definition, snapshot: snapshot)
+        try await database.workflows.store(definition, at: date)
+        let run = try await database.workflows.enqueue(plan: plan, actor: .human, at: date)
+        _ = try await database.workflows.approve(workflowRunID: run.id, currentSnapshot: snapshot, actor: .human, at: date)
+        _ = try await database.workflows.executeApproved(workflowRunID: run.id, currentSnapshot: snapshot, actor: .human, at: date.addingTimeInterval(1))
+
+        #expect(try await database.workflows.undo(workflowRunID: run.id, actor: .human, at: date.addingTimeInterval(2)))
+        let tagsByAsset = try await database.tags.tags(for: [addedByWorkflow.id, alreadyTagged.id])
+        #expect(tagsByAsset[addedByWorkflow.id] == nil)
+        #expect(tagsByAsset[alreadyTagged.id]?.map(\.name.rawValue) == ["review:strong"])
+        #expect(!(try await database.workflows.undo(workflowRunID: run.id, actor: .human, at: date.addingTimeInterval(3))))
+        #expect(try await database.workflows.auditEvents(for: run.id).map(\.kind) == [.planCreated, .proposalCreated, .approvalGranted, .executionStarted, .executionSucceeded, .undoStarted, .undoSucceeded])
+    }
+
     @Test("A later failed workflow step rolls back every earlier catalog action")
     func failedWorkflowExecutionIsAtomic() async throws {
         let temporary = try TemporaryCatalog()

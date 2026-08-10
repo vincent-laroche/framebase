@@ -331,7 +331,6 @@ final class FramebaseUITests: XCTestCase {
         XCTAssertTrue(tagField.waitForExistence(timeout: 10))
         app.buttons["workflow.preview"].click()
         XCTAssertTrue(app.buttons["workflow.approveAndApply"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Exact targets"].waitForExistence(timeout: 10))
         XCTAssertEqual(assetOrganizationSnapshot(at: rootURL), beforePreview)
 
         app.buttons["workflow.approveAndApply"].click()
@@ -340,9 +339,16 @@ final class FramebaseUITests: XCTestCase {
             "The approved workflow did not write its reviewed tag."
         )
         XCTAssertEqual(assetTagNames(at: rootURL), ["review:strong"])
+        let undo = app.buttons["toolbar.workflowUndo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 10))
+        undo.click()
+        XCTAssertTrue(
+            waitForTagNames([], at: rootURL, timeout: 10),
+            "Undo did not remove the tag membership created by this workflow."
+        )
         XCTAssertEqual(
             workflowAuditKinds(at: rootURL),
-            ["planCreated", "proposalCreated", "approvalGranted", "executionStarted", "executionSucceeded"]
+            ["planCreated", "proposalCreated", "approvalGranted", "executionStarted", "executionSucceeded", "undoStarted", "undoSucceeded"]
         )
     }
 

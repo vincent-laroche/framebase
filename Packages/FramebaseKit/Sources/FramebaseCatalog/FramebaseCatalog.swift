@@ -15,7 +15,8 @@ public enum FramebaseCatalogFoundation {
     public static let visualLearningMigrationIdentifier = "v9_visual_learning_reviews"
     public static let workflowMigrationIdentifier = "v10_durable_workflow_runs"
     public static let workflowCLIApprovalMigrationIdentifier = "v11_workflow_cli_approvals"
-    public static let currentSchemaVersion = 11
+    public static let workflowUndoMigrationIdentifier = "v12_workflow_undo_effects"
+    public static let currentSchemaVersion = 12
 
     public static func configure(_ configuration: inout Configuration) {
         configuration.foreignKeysEnabled = true
@@ -595,6 +596,25 @@ public final class CatalogDatabase: Sendable {
                 );
                 """)
             try db.execute(sql: "UPDATE catalog_settings SET value = '11', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.workflowUndoMigrationIdentifier) { db in
+            try db.execute(sql: "ALTER TABLE workflow_step_runs ADD COLUMN result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json))")
+            try db.execute(sql: """
+                CREATE TABLE workflow_audit_events_v12 (
+                    id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+                    workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL CHECK(kind IN ('planCreated', 'proposalCreated', 'approvalGranted', 'approvalRejected', 'executionStarted', 'executionSucceeded', 'executionFailed', 'undoStarted', 'undoSucceeded', 'runCancelled', 'snapshotMarkedStale')),
+                    actor TEXT NOT NULL CHECK(actor IN ('human', 'workflow', 'agent', 'system')),
+                    summary TEXT NOT NULL CHECK(length(summary) BETWEEN 1 AND 512),
+                    captured_at_ms INTEGER NOT NULL
+                );
+                INSERT INTO workflow_audit_events_v12 (id, workflow_run_id, kind, actor, summary, captured_at_ms)
+                SELECT id, workflow_run_id, kind, actor, summary, captured_at_ms FROM workflow_audit_events;
+                DROP TABLE workflow_audit_events;
+                ALTER TABLE workflow_audit_events_v12 RENAME TO workflow_audit_events;
+                CREATE INDEX workflow_audit_events_run_captured_index ON workflow_audit_events(workflow_run_id, captured_at_ms ASC, id ASC);
+                """)
+            try db.execute(sql: "UPDATE catalog_settings SET value = '12', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
         }
         return migrator
     }

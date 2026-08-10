@@ -16,6 +16,7 @@ public enum WorkflowValidationError: Error, Equatable, Sendable {
 public enum WorkflowExecutionError: Error, Equatable, Sendable {
     case approvalRequired
     case appServiceRequired
+    case undoUnavailable
 }
 
 public enum WorkflowTrigger: String, Codable, CaseIterable, Hashable, Sendable {
@@ -162,6 +163,8 @@ public enum WorkflowAuditEventKind: String, Codable, CaseIterable, Hashable, Sen
     case executionStarted
     case executionSucceeded
     case executionFailed
+    case undoStarted
+    case undoSucceeded
     case runCancelled
     case snapshotMarkedStale
 }
@@ -266,6 +269,7 @@ public struct WorkflowStepRun: Codable, Hashable, Sendable {
     public let action: WorkflowAction
     public let targetAssetIDs: [AssetID]
     public let state: WorkflowRunState
+    public let result: WorkflowStepResult?
 
     public init(
         id: UUID = UUID(),
@@ -273,7 +277,8 @@ public struct WorkflowStepRun: Codable, Hashable, Sendable {
         sequence: Int,
         action: WorkflowAction,
         targetAssetIDs: [AssetID],
-        state: WorkflowRunState
+        state: WorkflowRunState,
+        result: WorkflowStepResult? = nil
     ) {
         self.id = id
         self.workflowRunID = workflowRunID
@@ -281,6 +286,30 @@ public struct WorkflowStepRun: Codable, Hashable, Sendable {
         self.action = action
         self.targetAssetIDs = targetAssetIDs
         self.state = state
+        self.result = result
+    }
+}
+
+/// An exact, catalog-only effect of an applied step. It is recorded after the
+/// transaction commits so a later undo can remove only membership rows the
+/// workflow itself added; it never guesses from the current catalog state.
+public enum WorkflowStepResult: Codable, Hashable, Sendable {
+    case tagApplication(WorkflowTagApplicationEffect)
+}
+
+public struct WorkflowTagApplicationEffect: Codable, Hashable, Sendable {
+    public let tagID: TagID
+    public let tagName: String
+    public let addedAssetIDs: [AssetID]
+    public let addedAt: Date
+    public let createdTag: Bool
+
+    public init(tagID: TagID, tagName: String, addedAssetIDs: [AssetID], addedAt: Date, createdTag: Bool) {
+        self.tagID = tagID
+        self.tagName = tagName
+        self.addedAssetIDs = Array(Set(addedAssetIDs)).sorted { $0.description < $1.description }
+        self.addedAt = addedAt
+        self.createdTag = createdTag
     }
 }
 

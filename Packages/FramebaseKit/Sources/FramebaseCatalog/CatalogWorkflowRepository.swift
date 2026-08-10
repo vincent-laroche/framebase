@@ -62,8 +62,8 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                     state: .awaitingApproval
                 )
                 try db.execute(sql: """
-                    INSERT INTO workflow_step_runs (id, workflow_run_id, sequence, action_json, target_asset_ids_json, state)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO workflow_step_runs (id, workflow_run_id, sequence, action_json, target_asset_ids_json, state, result_json)
+                    VALUES (?, ?, ?, ?, ?, ?, NULL)
                     """, arguments: [
                         stepRun.id.uuidString.lowercased(), run.id.uuidString.lowercased(), stepRun.sequence,
                         try Self.encode(stepRun.action), try Self.encode(stepRun.targetAssetIDs), stepRun.state.rawValue
@@ -203,9 +203,9 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                 ])
                 try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .executionStarted, actor: actor, summary: "Approved local execution started", capturedAt: date), in: db)
                 for step in plan.steps {
-                    try Self.execute(step: step, in: db, at: date)
-                    try db.execute(sql: "UPDATE workflow_step_runs SET state = ? WHERE workflow_run_id = ? AND sequence = ?", arguments: [
-                        WorkflowRunState.succeeded.rawValue, workflowRunID.uuidString.lowercased(), step.sequence
+                    let result = try Self.execute(step: step, in: db, at: date)
+                    try db.execute(sql: "UPDATE workflow_step_runs SET state = ?, result_json = ? WHERE workflow_run_id = ? AND sequence = ?", arguments: [
+                        WorkflowRunState.succeeded.rawValue, try result.map(Self.encode), workflowRunID.uuidString.lowercased(), step.sequence
                     ])
                 }
                 try db.execute(sql: "UPDATE workflow_runs SET state = ?, updated_at_ms = ? WHERE id = ?", arguments: [
@@ -237,6 +237,39 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                 state: WorkflowApprovalState(rawValue: row["state"] as String)!,
                 createdAt: CatalogDate.date(row["created_at_ms"] as Int64)
             )
+        }
+    }
+
+    public func undo(workflowRunID: UUID, actor: WorkflowAuditActor, at date: Date = Date()) async throws -> Bool {
+        try await databasePool.write { db in
+            guard let state: String = try String.fetchOne(db, sql: "SELECT state FROM workflow_runs WHERE id = ?", arguments: [workflowRunID.uuidString.lowercased()]),
+                  state == WorkflowRunState.succeeded.rawValue else {
+                throw WorkflowExecutionError.undoUnavailable
+            }
+            let alreadyUndone = try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM workflow_audit_events WHERE workflow_run_id = ? AND kind = ?)", arguments: [workflowRunID.uuidString.lowercased(), WorkflowAuditEventKind.undoSucceeded.rawValue]) ?? false
+            guard !alreadyUndone else { return false }
+
+            let rows = try Row.fetchAll(db, sql: "SELECT result_json FROM workflow_step_runs WHERE workflow_run_id = ? AND result_json IS NOT NULL ORDER BY sequence DESC", arguments: [workflowRunID.uuidString.lowercased()])
+            guard !rows.isEmpty else { throw WorkflowExecutionError.undoUnavailable }
+
+            var removedMembershipCount = 0
+            for row in rows {
+                let result: WorkflowStepResult = try Self.decode(row["result_json"] as String)
+                switch result {
+                case let .tagApplication(effect):
+                    let addedAt = CatalogDate.milliseconds(effect.addedAt)
+                    for assetID in effect.addedAssetIDs {
+                        try db.execute(sql: "DELETE FROM asset_tags WHERE asset_id = ? AND tag_id = ? AND added_at_ms = ?", arguments: [assetID.description, effect.tagID.description, addedAt])
+                        removedMembershipCount += db.changesCount
+                    }
+                    if effect.createdTag {
+                        try db.execute(sql: "DELETE FROM tags WHERE id = ? AND NOT EXISTS(SELECT 1 FROM asset_tags WHERE tag_id = ?)", arguments: [effect.tagID.description, effect.tagID.description])
+                    }
+                }
+            }
+            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .undoStarted, actor: actor, summary: "Undoing exact workflow tag effects", capturedAt: date), in: db)
+            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .undoSucceeded, actor: actor, summary: "Removed \(removedMembershipCount) workflow-created tag membership\(removedMembershipCount == 1 ? "" : "s")", capturedAt: date), in: db)
+            return true
         }
     }
 
@@ -292,26 +325,32 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
         return mode == nil || mode == "localOnly" || mode == "paused" || mode == "failed"
     }
 
-    private static func execute(step: WorkflowPlanStep, in db: Database, at date: Date) throws {
+    private static func execute(step: WorkflowPlanStep, in db: Database, at date: Date) throws -> WorkflowStepResult? {
         switch step.action {
         case let .proposeTag(rawTag):
             let tagName = try TagName(rawTag)
             let milliseconds = CatalogDate.milliseconds(date)
-            try db.execute(sql: """
-                INSERT INTO tags (id, namespace, value, name, created_at_ms, updated_at_ms)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(name) DO NOTHING
-                """, arguments: [
-                    TagID().description, tagName.namespace, tagName.value, tagName.rawValue, milliseconds, milliseconds
+            let existingTagID = try String.fetchOne(db, sql: "SELECT id FROM tags WHERE name = ? COLLATE NOCASE", arguments: [tagName.rawValue])
+            let tagID: TagID
+            let createdTag: Bool
+            if let existingTagID, let rawID = UUID(uuidString: existingTagID) {
+                tagID = TagID(rawValue: rawID)
+                createdTag = false
+            } else {
+                tagID = TagID()
+                createdTag = true
+                try db.execute(sql: "INSERT INTO tags (id, namespace, value, name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?)", arguments: [
+                    tagID.description, tagName.namespace, tagName.value, tagName.rawValue, milliseconds, milliseconds
                 ])
-            guard let tagID = try String.fetchOne(db, sql: "SELECT id FROM tags WHERE name = ? COLLATE NOCASE", arguments: [tagName.rawValue]) else {
-                throw CatalogError.invalidPersistedValue("workflow_tag")
             }
+            var addedAssetIDs: [AssetID] = []
             for assetID in step.targetAssetIDs {
-                try db.execute(sql: "INSERT OR IGNORE INTO asset_tags (asset_id, tag_id, added_at_ms) VALUES (?, ?, ?)", arguments: [
-                    assetID.description, tagID, milliseconds
-                ])
+                let alreadyTagged = try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM asset_tags WHERE asset_id = ? AND tag_id = ?)", arguments: [assetID.description, tagID.description]) ?? false
+                guard !alreadyTagged else { continue }
+                try db.execute(sql: "INSERT INTO asset_tags (asset_id, tag_id, added_at_ms) VALUES (?, ?, ?)", arguments: [assetID.description, tagID.description, milliseconds])
+                addedAssetIDs.append(assetID)
             }
+            return .tagApplication(.init(tagID: tagID, tagName: tagName.rawValue, addedAssetIDs: addedAssetIDs, addedAt: date, createdTag: createdTag))
         case let .proposeAddToAlbum(albumID):
             let exists = try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM albums WHERE id = ?)", arguments: [albumID.description]) ?? false
             guard exists else { throw CatalogError.albumNotFound(albumID) }
@@ -322,8 +361,9 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                     albumID.description, assetID.description, CatalogDate.milliseconds(date), nextSortOrder
                 ])
             }
+            return nil
         case .createProposal, .notifyInApp:
-            break
+            return nil
         case .runLocalAnalysis:
             throw WorkflowExecutionError.appServiceRequired
         case .permanentPurge:

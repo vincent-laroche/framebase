@@ -22,6 +22,14 @@ struct WorkflowTagPreview: Identifiable, Sendable {
     var id: UUID { workflowRunID }
 }
 
+struct WorkflowTagUndo: Identifiable, Sendable {
+    let workflowRunID: UUID
+    let tagName: TagName
+    let targetCount: Int
+
+    var id: UUID { workflowRunID }
+}
+
 private struct FolderHistoryEntry: Sendable {
     let actionName: String
     let action: FolderHistoryAction
@@ -146,6 +154,7 @@ final class LibraryWindowModel {
     var hairSolutionsTemplatePreview: LibraryTemplateApplicationPreview?
     var workflowTagPreview: WorkflowTagPreview?
     var workflowTagFailureMessage: String?
+    var workflowTagUndo: WorkflowTagUndo?
     var pendingFolderDeletion: FolderDeletionPrompt?
     var isInspectorVisible = true
     var thumbnailSize: Double = 176 {
@@ -850,6 +859,11 @@ final class LibraryWindowModel {
             )
             workflowTagPreview = nil
             workflowTagFailureMessage = nil
+            workflowTagUndo = WorkflowTagUndo(
+                workflowRunID: preview.workflowRunID,
+                tagName: preview.tagName,
+                targetCount: preview.plan.snapshot.assetIDs.count
+            )
             await refreshInspectorNow()
             statusMessage = "Applied \(preview.tagName.rawValue) to \(preview.plan.snapshot.assetIDs.count) selected asset\(preview.plan.snapshot.assetIDs.count == 1 ? "" : "s") after reviewing the exact plan."
             return true
@@ -869,6 +883,23 @@ final class LibraryWindowModel {
     func dismissWorkflowTagPreview() {
         workflowTagPreview = nil
         workflowTagFailureMessage = nil
+    }
+
+    func undoWorkflowTag() async {
+        guard let undo = workflowTagUndo, let catalog = container.catalogDatabase else { return }
+        do {
+            let changed = try await catalog.workflows.undo(workflowRunID: undo.workflowRunID, actor: .human, at: .now)
+            guard changed else {
+                workflowTagUndo = nil
+                statusMessage = "That workflow has already been undone."
+                return
+            }
+            workflowTagUndo = nil
+            await refreshInspectorNow()
+            statusMessage = "Undid the exact tag memberships created by the workflow. Existing tag membership was preserved."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
     }
 
     func libraryStateDidChange() {

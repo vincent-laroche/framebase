@@ -190,6 +190,15 @@ struct LibraryWindowView: View {
                 .accessibilityIdentifier("toolbar.workflowTag")
                 .disabled(model.selectedAssetIDs.isEmpty || model.container.cloudBackingIsActive)
 
+                if let undo = model.workflowTagUndo {
+                    Button {
+                        Task { await model.undoWorkflowTag() }
+                    } label: {
+                        Label("Undo \(undo.tagName.rawValue)", systemImage: "arrow.uturn.backward")
+                    }
+                    .accessibilityIdentifier("toolbar.workflowUndo")
+                }
+
                 Button {
                     Task {
                         if model.navigationTarget == .trash {

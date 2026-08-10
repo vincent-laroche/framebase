@@ -100,7 +100,7 @@ Before/after matching has a second local relationship record: `candidate`, `conf
 - [x] Add an explicit inspector review card that shows provider/model/schema/derivative provenance and lets Vincent accept, correct, or reject an assessment.
 - [x] Add manual before/after confirmation and rejection actions. A candidate may never alter a folder, tag, album, name, rating, favorite, or Trash state.
 - [x] Add terminal-only UI tests that snapshot these organization fields before and after assessment/review actions.
-- [ ] Run focused catalog/domain/UI tests and `./script/build_and_run.sh --verify`.
+- [x] Run focused catalog/domain/UI tests and `./script/build_and_run.sh --verify`. The full SwiftPM suite passes 87 tests in 19 suites; the focused terminal-only assessment-review UI test and native launch verification pass.
 
 ## Task 5: Freeze an evaluation set and quality promotion rules
 
@@ -135,9 +135,9 @@ Before/after matching has a second local relationship record: `candidate`, `conf
 
 ## Exit Checklist
 
-- [ ] No executable face detection or identity recognition exists in Phase 6 sources.
-- [ ] OCR, barcode, and document results are local, provenance-rich, bounded, and non-destructive.
-- [ ] Every visual assessment is clearly labeled as provider advice or a human decision.
-- [ ] Before/after and hairline presentation are reviewable attributes, not automated organization or biometric recognition.
+- [x] No executable face detection or identity recognition exists in Phase 6 sources.
+- [x] OCR, barcode, and document results are local, provenance-rich, bounded, and non-destructive.
+- [x] Every visual assessment is clearly labeled as provider advice or a human decision.
+- [x] Before/after and hairline presentation are reviewable attributes, not automated organization or biometric recognition.
 - [ ] Claude Sonnet integration has a pinned revision, approved privacy/cost controls, synthetic proof, and redacted logs before any real-photo use.
 - [ ] A versioned feedback dataset and frozen evaluation set govern future calibration instead of opaque self-training.
