@@ -13,14 +13,15 @@ public struct WorkflowPlanner: Sendable {
             definition.trigger.rawValue,
             definition.actions.map(\.canonicalValue).joined(separator: "|"),
             snapshot.assetIDs.map(\.description).joined(separator: ","),
-            snapshot.catalogRevision.description
+            snapshot.catalogRevision.description,
+            snapshot.sourceFingerprint
         ].joined(separator: ":")
         return WorkflowPlan(
             definitionID: definition.id,
             definitionSchemaVersion: definition.schemaVersion,
             snapshot: snapshot,
             steps: steps,
-            idempotencyKey: WorkflowHash.sha256Hex(canonical),
+            idempotencyKey: WorkflowFingerprint.sha256Hex(canonical),
             approvalState: .awaitingApproval
         )
     }

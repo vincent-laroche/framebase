@@ -105,8 +105,8 @@ Before/after matching has a second local relationship record: `candidate`, `conf
 **Files:** synthetic fixture generator, local evaluation harness, `docs/phases/` scorecard.
 
 - [ ] Define the rubric with Vincent using examples he labels manually; do not infer business-quality rules from unreviewed media.
-- [ ] Create a versioned fixture manifest split into development, frozen holdout, and regression cases. It may use generated/sanitized images until per-library permission is approved.
-- [ ] Measure at minimum: assessment-label agreement, strong-photo precision in the review queue, before/after candidate precision, hairline-presentation agreement, low-confidence rate, latency, and cost per reviewed asset.
+- [x] Create a versioned synthetic fixture manifest split into development, frozen holdout, and regression cases. It contains labels and metrics only, never media, paths, prompts, or OCR text.
+- [x] Measure assessment-label agreement, strong-photo precision, before/after candidate precision, hairline-presentation agreement, low-confidence rate, latency, and cost per reviewed asset with a deterministic scorecard.
 - [ ] Require improvement on the frozen holdout and no privacy regressions before promoting a new rubric/model revision.
 - [ ] Keep an explicit rollback that returns all assets to the prior review ordering while retaining evidence.
 

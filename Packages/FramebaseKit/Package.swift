@@ -67,7 +67,8 @@ let package = Package(
         ),
         .testTarget(
             name: "FramebaseDomainTests",
-            dependencies: ["FramebaseDomain", "FramebaseTestSupport"]
+            dependencies: ["FramebaseDomain", "FramebaseTestSupport"],
+            resources: [.process("Fixtures")]
         ),
         .testTarget(
             name: "FramebaseCatalogTests",

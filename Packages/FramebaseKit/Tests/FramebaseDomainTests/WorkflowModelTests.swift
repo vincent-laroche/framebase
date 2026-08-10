@@ -59,5 +59,15 @@ struct WorkflowModelTests {
         #expect(throws: WorkflowValidationError.snapshotDrift) {
             try plan.validateForApply(currentCatalogRevision: 43)
         }
+
+        let changed = try WorkflowInputSnapshot(
+            assetIDs: [assetID],
+            catalogRevision: 42,
+            sourceFingerprint: String(repeating: "a", count: 64),
+            capturedAt: .distantPast
+        )
+        #expect(throws: WorkflowValidationError.snapshotDrift) {
+            try plan.validateForApply(currentSnapshot: changed)
+        }
     }
 }

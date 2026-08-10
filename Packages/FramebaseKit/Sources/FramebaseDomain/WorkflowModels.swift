@@ -10,6 +10,12 @@ public enum WorkflowValidationError: Error, Equatable, Sendable {
     case emptyInputSelection
     case invalidCatalogRevision
     case snapshotDrift
+    case invalidSnapshotFingerprint
+}
+
+public enum WorkflowExecutionError: Error, Equatable, Sendable {
+    case approvalRequired
+    case appServiceRequired
 }
 
 public enum WorkflowTrigger: String, Codable, CaseIterable, Hashable, Sendable {
@@ -77,7 +83,7 @@ public struct WorkflowDefinition: Codable, Hashable, Sendable {
             case .permanentPurge:
                 throw WorkflowValidationError.permanentPurgeForbidden
             case let .proposeTag(tag):
-                guard !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                guard (try? TagName(tag)) != nil else {
                     throw WorkflowValidationError.invalidTagName
                 }
             default:
@@ -96,13 +102,29 @@ public struct WorkflowDefinition: Codable, Hashable, Sendable {
 public struct WorkflowInputSnapshot: Codable, Hashable, Sendable {
     public let assetIDs: [AssetID]
     public let catalogRevision: Int64
+    /// Digest of the selected assets' logical state, tags, and album
+    /// membership. This protects a plan when the catalog has no single global
+    /// revision counter covering every local relationship.
+    public let sourceFingerprint: String
     public let capturedAt: Date
 
-    public init(assetIDs: [AssetID], catalogRevision: Int64, capturedAt: Date) throws {
+    public init(
+        assetIDs: [AssetID],
+        catalogRevision: Int64,
+        sourceFingerprint: String? = nil,
+        capturedAt: Date
+    ) throws {
         guard !assetIDs.isEmpty else { throw WorkflowValidationError.emptyInputSelection }
         guard catalogRevision >= 0 else { throw WorkflowValidationError.invalidCatalogRevision }
-        self.assetIDs = Array(Set(assetIDs)).sorted { $0.description < $1.description }
+        let normalizedAssetIDs = Array(Set(assetIDs)).sorted { $0.description < $1.description }
+        let fallbackFingerprint = WorkflowFingerprint.sha256Hex(
+            normalizedAssetIDs.map(\.description).joined(separator: ",") + ":" + catalogRevision.description
+        )
+        let fingerprint = (sourceFingerprint ?? fallbackFingerprint).lowercased()
+        guard WorkflowFingerprint.isSHA256(fingerprint) else { throw WorkflowValidationError.invalidSnapshotFingerprint }
+        self.assetIDs = normalizedAssetIDs
         self.catalogRevision = catalogRevision
+        self.sourceFingerprint = fingerprint
         self.capturedAt = capturedAt
     }
 }
@@ -184,6 +206,14 @@ public struct WorkflowPlan: Codable, Hashable, Sendable {
 
     public func validateForApply(currentCatalogRevision: Int64) throws {
         guard currentCatalogRevision == snapshot.catalogRevision else { throw WorkflowValidationError.snapshotDrift }
+    }
+
+    public func validateForApply(currentSnapshot: WorkflowInputSnapshot) throws {
+        guard currentSnapshot.assetIDs == snapshot.assetIDs,
+              currentSnapshot.catalogRevision == snapshot.catalogRevision,
+              currentSnapshot.sourceFingerprint == snapshot.sourceFingerprint else {
+            throw WorkflowValidationError.snapshotDrift
+        }
     }
 }
 
@@ -281,8 +311,14 @@ public struct WorkflowAuditEvent: Codable, Hashable, Sendable {
     }
 }
 
-enum WorkflowHash {
-    static func sha256Hex(_ string: String) -> String {
+public enum WorkflowFingerprint {
+    public static func sha256Hex(_ string: String) -> String {
         SHA256.hash(data: Data(string.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    public static func isSHA256(_ value: String) -> Bool {
+        value.count == 64 && value.unicodeScalars.allSatisfy { scalar in
+            (48...57).contains(scalar.value) || (97...102).contains(scalar.value)
+        }
     }
 }

@@ -1,0 +1,62 @@
+[
+  {
+    "fixtureID": "synthetic-development-001",
+    "split": "development",
+    "expectedBusinessQuality": "usable",
+    "predictedBusinessQuality": "usable",
+    "expectedPhotoRole": "other",
+    "predictedPhotoRole": "other",
+    "expectedHairlinePresentation": "notVisible",
+    "predictedHairlinePresentation": "notVisible",
+    "expectedBeforeAfterCandidate": false,
+    "predictedBeforeAfterCandidate": false,
+    "confidence": 0.8,
+    "latencyMilliseconds": 120,
+    "estimatedCostUSD": 0.01
+  },
+  {
+    "fixtureID": "synthetic-holdout-001",
+    "split": "holdout",
+    "expectedBusinessQuality": "strong",
+    "predictedBusinessQuality": "strong",
+    "expectedPhotoRole": "afterCandidate",
+    "predictedPhotoRole": "afterCandidate",
+    "expectedHairlinePresentation": "clearlyVisible",
+    "predictedHairlinePresentation": "clearlyVisible",
+    "expectedBeforeAfterCandidate": true,
+    "predictedBeforeAfterCandidate": true,
+    "confidence": 0.9,
+    "latencyMilliseconds": 100,
+    "estimatedCostUSD": 0.01
+  },
+  {
+    "fixtureID": "synthetic-holdout-002",
+    "split": "holdout",
+    "expectedBusinessQuality": "strong",
+    "predictedBusinessQuality": "usable",
+    "expectedPhotoRole": "beforeCandidate",
+    "predictedPhotoRole": "beforeCandidate",
+    "expectedHairlinePresentation": "clearlyVisible",
+    "predictedHairlinePresentation": "partiallyVisible",
+    "expectedBeforeAfterCandidate": true,
+    "predictedBeforeAfterCandidate": false,
+    "confidence": 0.4,
+    "latencyMilliseconds": 300,
+    "estimatedCostUSD": 0.01
+  },
+  {
+    "fixtureID": "synthetic-regression-001",
+    "split": "regression",
+    "expectedBusinessQuality": "needsReview",
+    "predictedBusinessQuality": "needsReview",
+    "expectedPhotoRole": "unclear",
+    "predictedPhotoRole": "unclear",
+    "expectedHairlinePresentation": "unclear",
+    "predictedHairlinePresentation": "unclear",
+    "expectedBeforeAfterCandidate": false,
+    "predictedBeforeAfterCandidate": false,
+    "confidence": 0.3,
+    "latencyMilliseconds": 200,
+    "estimatedCostUSD": 0.01
+  }
+]

@@ -69,6 +69,36 @@ struct VisualLearningModelTests {
         #expect(!VisualEvidenceCode.allCases.map(\.rawValue).contains("face"))
     }
 
+    @Test("Frozen synthetic holdout produces a reproducible visual-learning scorecard")
+    func frozenHoldoutScorecard() throws {
+        let fixtureURL = try #require(Bundle.module.url(forResource: "visual-learning-evaluation-v1", withExtension: "json"))
+        let records = try JSONDecoder().decode([VisualEvaluationRecord].self, from: Data(contentsOf: fixtureURL))
+        let scorecard = try VisualLearningEvaluator.score(records: records, split: .holdout)
+
+        #expect(scorecard.fixtureCount == 2)
+        #expect(scorecard.assessmentLabelAgreement == 4.0 / 6.0)
+        #expect(scorecard.strongPhotoPrecision == 1)
+        #expect(scorecard.beforeAfterCandidatePrecision == 1)
+        #expect(scorecard.hairlinePresentationAgreement == 0.5)
+        #expect(scorecard.lowConfidenceRate == 0.5)
+        #expect(scorecard.averageLatencyMilliseconds == 200)
+        #expect(scorecard.averageCostUSD == 0.01)
+    }
+
+    @Test("Evaluation records reject invalid operational values")
+    func evaluationRecordValidation() {
+        #expect(throws: VisualLearningEvaluationError.self) {
+            try VisualEvaluationRecord(
+                fixtureID: " ", split: .holdout,
+                expectedBusinessQuality: .strong, predictedBusinessQuality: .strong,
+                expectedPhotoRole: .other, predictedPhotoRole: .other,
+                expectedHairlinePresentation: .unclear, predictedHairlinePresentation: .unclear,
+                expectedBeforeAfterCandidate: false, predictedBeforeAfterCandidate: false,
+                confidence: 1.1, latencyMilliseconds: -1, estimatedCostUSD: -0.01
+            )
+        }
+    }
+
     private func fixtureAssessment(rationale: String = "Sharp, useful product view") throws -> PhotoAssessment {
         try PhotoAssessment(
             assetID: assetID,

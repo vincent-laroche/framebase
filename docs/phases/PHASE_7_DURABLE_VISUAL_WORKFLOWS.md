@@ -46,7 +46,7 @@
 - [x] Add an additive migration with restart/reopen tests.
 - [x] Store typed workflow/proposal/run state and retain the reviewed plan as evidence.
 - [x] Enforce append-only audit events and one effective operation per idempotency key.
-- [ ] Prove a failed/retried run cannot duplicate an accepted local mutation.
+- [x] Prove a failed/retried run cannot duplicate an accepted local mutation and a later failed step rolls the whole catalog group back.
 
 ## Task 4: Add a Mac-first preview and approval UI
 

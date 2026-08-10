@@ -158,6 +158,60 @@ public final class CatalogDatabase: Sendable {
         }
     }
 
+    /// Captures the precise logical input a workflow is allowed to act on.
+    /// It includes only catalog state, never original bytes or storage paths.
+    public func workflowInputSnapshot(
+        assetIDs: Set<AssetID>,
+        capturedAt: Date = Date()
+    ) async throws -> WorkflowInputSnapshot {
+        guard !assetIDs.isEmpty else {
+            return try WorkflowInputSnapshot(assetIDs: [], catalogRevision: 0, capturedAt: capturedAt)
+        }
+        return try await databasePool.read { db in
+            let identifiers = assetIDs.map(\.description).sorted()
+            let placeholders = identifiers.map { _ in "?" }.joined(separator: ", ")
+            let assetRows = try Row.fetchAll(db, sql: """
+                SELECT id, display_name, parent_folder_id, favorite, rating, updated_at_ms
+                FROM assets WHERE id IN (\(placeholders)) ORDER BY id ASC
+                """, arguments: StatementArguments(identifiers))
+            guard assetRows.count == identifiers.count else {
+                throw CatalogError.invalidPersistedValue("workflow_snapshot_asset")
+            }
+            let tagRows = try Row.fetchAll(db, sql: """
+                SELECT asset_tags.asset_id, tags.name
+                FROM asset_tags JOIN tags ON tags.id = asset_tags.tag_id
+                WHERE asset_tags.asset_id IN (\(placeholders))
+                ORDER BY asset_tags.asset_id ASC, tags.name ASC
+                """, arguments: StatementArguments(identifiers))
+            let albumRows = try Row.fetchAll(db, sql: """
+                SELECT album_assets.asset_id, album_assets.album_id
+                FROM album_assets
+                WHERE album_assets.asset_id IN (\(placeholders))
+                ORDER BY album_assets.asset_id ASC, album_assets.album_id ASC
+                """, arguments: StatementArguments(identifiers))
+
+            let assetParts = assetRows.map { row in
+                [
+                    row["id"] as String,
+                    row["display_name"] as String,
+                    row["parent_folder_id"] as String,
+                    (row["favorite"] as Bool).description,
+                    (row["rating"] as Int).description,
+                    (row["updated_at_ms"] as Int64).description
+                ].joined(separator: "|")
+            }
+            let tagParts = tagRows.map { "tag|\($0["asset_id"] as String)|\($0["name"] as String)" }
+            let albumParts = albumRows.map { "album|\($0["asset_id"] as String)|\($0["album_id"] as String)" }
+            let revision = assetRows.compactMap { $0["updated_at_ms"] as Int64? }.max() ?? 0
+            return try WorkflowInputSnapshot(
+                assetIDs: Array(assetIDs),
+                catalogRevision: revision,
+                sourceFingerprint: WorkflowFingerprint.sha256Hex((assetParts + tagParts + albumParts).joined(separator: "\n")),
+                capturedAt: capturedAt
+            )
+        }
+    }
+
     /// Applies only the starter template's explicitly initial logical folders
     /// and controlled tag values. It never moves assets, changes original
     /// storage, or creates the intentionally on-first-use folders.
