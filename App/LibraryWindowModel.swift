@@ -124,6 +124,7 @@ final class LibraryWindowModel {
     }
     var selectedAssets: [Asset] = []
     var selectedAnalysisResults: [AssetAnalysisResult] = []
+    var selectedPhotoAssessments: [PhotoAssessment] = []
     var isAnalyzingSelection = false
     var inspectorSelectionIsLimited = false
     var inspectorPreviewState: AssetThumbnailState?
@@ -694,6 +695,33 @@ final class LibraryWindowModel {
         }
     }
 
+    /// Records human visual-learning evidence only. This does not rename,
+    /// move, tag, rate, favorite, delete, or otherwise organize an asset.
+    func recordAssessmentReview(_ assessment: PhotoAssessment, decision: AssessmentReviewDecision) async {
+        guard selectedAssetIDs == Set([assessment.assetID]), let catalog = container.catalogDatabase else { return }
+        do {
+            let review = try AssessmentReview(
+                assessmentID: assessment.id,
+                assetID: assessment.assetID,
+                decision: decision,
+                reviewedAt: .now
+            )
+            try await catalog.visualLearning.record(review)
+            let outcome: AssessmentFeedbackOutcome = switch decision {
+            case .accepted: .helpful
+            case .rejected: .notHelpful
+            case .needsMoreContext, .unreviewed, .corrected: .uncertain
+            }
+            try await catalog.visualLearning.record(
+                AssessmentFeedbackEvent(assessmentID: assessment.id, reviewID: review.id, outcome: outcome, capturedAt: .now)
+            )
+            await refreshInspectorNow()
+            statusMessage = "Recorded your visual-assessment review. Framebase did not organize this asset."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
     /// Previews a safe organization workflow without changing a tag, folder,
     /// album, rating, favorite, Trash state, or managed original.
     func prepareTagWorkflow(named rawTagName: String) async {
@@ -1037,6 +1065,7 @@ final class LibraryWindowModel {
         inspectorPreviewRequestID = nil
         selectedAssets = []
         selectedAnalysisResults = []
+        selectedPhotoAssessments = []
         selectedTags = []
         selectedDuplicateCandidate = nil
         selectedTrashReceipts = []
@@ -1072,11 +1101,13 @@ final class LibraryWindowModel {
                     let candidates = try await catalog.cloud.duplicateCandidates()
                     selectedDuplicateCandidate = candidates.first { $0.assetIDs.contains(asset.id) }
                     selectedAnalysisResults = try await catalog.intelligence.results(for: asset.id)
+                    selectedPhotoAssessments = try await catalog.visualLearning.assessments(for: asset.id)
                 }
             } else {
                 inspectorPreviewState = nil
                 selectedDuplicateCandidate = nil
                 selectedAnalysisResults = []
+                selectedPhotoAssessments = []
             }
             selectedTrashReceipts = try await repository.trashReceipts(for: selection)
         } catch is CancellationError {

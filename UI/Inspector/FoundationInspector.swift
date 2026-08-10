@@ -74,6 +74,8 @@ struct FoundationInspector: View {
 
             localAnalysis
 
+            visualAssessmentReview
+
             Section("Organization") {
                 Toggle("Favorite", isOn: favoriteBinding(asset.favorite))
                 Picker("Rating", selection: ratingBinding(asset.rating.rawValue)) {
@@ -306,6 +308,43 @@ struct FoundationInspector: View {
                             .truncationMode(.middle)
                     }
                     analysisPayload(result.payload)
+                }
+            }
+        }
+    }
+
+    private var visualAssessmentReview: some View {
+        Section("Visual assessment review") {
+            if model.selectedPhotoAssessments.isEmpty {
+                Text("No visual assessment is available for this image yet.")
+                    .foregroundStyle(.secondary)
+                Text("Any future assessment is advisory. Your review is stored as learning evidence and never organizes this asset automatically.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(model.selectedPhotoAssessments, id: \.id) { assessment in
+                    LabeledContent("Business quality", value: assessment.businessQuality.rawValue)
+                    LabeledContent("Photo role", value: assessment.photoRole.rawValue)
+                    LabeledContent("Hairline presentation", value: assessment.hairlinePresentation.rawValue)
+                    LabeledContent("Confidence", value: assessment.confidence.formatted(.percent.precision(.fractionLength(0))))
+                    LabeledContent("Model", value: assessment.modelRevision.modelIdentifier)
+                    HStack {
+                        Button("Accept") {
+                            Task { await model.recordAssessmentReview(assessment, decision: .accepted) }
+                        }
+                        .accessibilityIdentifier("assessment.accept")
+                        Button("Needs Context") {
+                            Task { await model.recordAssessmentReview(assessment, decision: .needsMoreContext) }
+                        }
+                        .accessibilityIdentifier("assessment.needsContext")
+                        Button("Reject", role: .destructive) {
+                            Task { await model.recordAssessmentReview(assessment, decision: .rejected) }
+                        }
+                        .accessibilityIdentifier("assessment.reject")
+                    }
+                    Text("Reviewing records feedback only; folders, tags, ratings, favorites, and originals remain unchanged.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
