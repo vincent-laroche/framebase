@@ -51,4 +51,18 @@ enum LibraryPanelService {
         guard panel.runModal() == .OK else { return [] }
         return panel.urls
     }
+
+    static func chooseExportDirectory() -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = "Export Framebase Originals"
+        panel.message = "Choose a destination folder. Framebase will copy verified originals and a manifest there."
+        panel.prompt = "Export Here"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.resolvesAliases = true
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
+    }
 }

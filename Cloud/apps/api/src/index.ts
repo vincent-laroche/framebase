@@ -6,6 +6,7 @@ import { blobsRouter } from './routes/blobs.js';
 import { changesRouter } from './routes/changes.js';
 import { mutationsRouter } from './routes/mutations.js';
 import { catalogRouter } from './routes/catalog.js';
+import { derivativesRouter } from './routes/derivatives.js';
 
 const app = new Hono<AppEnv>();
 
@@ -27,6 +28,7 @@ app.route('/v1', blobsRouter);
 app.route('/v1', changesRouter);
 app.route('/v1', mutationsRouter);
 app.route('/v1', catalogRouter);
+app.route('/v1', derivativesRouter);
 
 // Root fallback
 app.get('/', (c) => c.json({ name: 'Framebase API Dev', version: '0.1.0', docs: '/v1/health' }));

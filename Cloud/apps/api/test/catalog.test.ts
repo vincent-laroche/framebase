@@ -44,4 +44,92 @@ describe('catalog bootstrap', () => {
       expect(response.status).toBe(403);
     }
   });
+
+  it('preserves the immutable local asset envelope in bootstrap output', async () => {
+    const token = await enrollDevice(env, 'device-asset-envelope', ['assets.import', 'library.read']);
+    const digest = 'a'.repeat(64);
+    await env.DB.prepare(
+      `INSERT INTO blobs (id, sha256, byte_size, media_type, original_extension, r2_key, upload_state)
+       VALUES (?, ?, ?, ?, ?, ?, 'verified')`
+    ).bind(digest, digest, 42, 'image/jpeg', 'jpg', 'blobs/test.jpg').run();
+    const metadata = {
+      filename: 'portrait.jpg', storageKey: 'aa/asset.jpg', mediaType: 'stillImage',
+      fileSize: 42, createdAt: '2026-01-01T00:00:00.000Z', modifiedAt: '2026-01-01T00:00:00.000Z',
+      importedAt: '2026-01-01T00:00:00.000Z', metadata: { version: 1 }
+    };
+    const created = await app.request('/v1/mutations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Idempotency-Key': 'create-envelope-asset' },
+      body: JSON.stringify({ operations: [{
+        type: 'create_asset', targetId: 'asset-envelope',
+        payload: { blobId: digest, folderId: 'system-inbox', displayName: 'Portrait', assetMetadata: metadata }
+      }] })
+    }, env);
+    expect(created.status).toBe(200);
+
+    const bootstrap = await app.request('/v1/catalog/bootstrap?limit=20', { headers: { Authorization: `Bearer ${token}` } }, env);
+    const body = await bootstrap.json<{ entities: Array<{ entityId: string; payload: { assetMetadata?: typeof metadata } }> }>();
+    expect(body.entities.find((entity) => entity.entityId === 'asset-envelope')?.payload.assetMetadata).toEqual(metadata);
+  });
+
+  it('includes album membership in the authoritative bootstrap snapshot', async () => {
+    const token = await enrollDevice(env, 'device-album-bootstrap', ['assets.organize', 'assets.import', 'library.read']);
+    const digest = 'b'.repeat(64);
+    await env.DB.prepare(
+      `INSERT INTO blobs (id, sha256, byte_size, media_type, original_extension, r2_key, upload_state)
+       VALUES (?, ?, ?, ?, ?, ?, 'verified')`
+    ).bind(digest, digest, 42, 'image/jpeg', 'jpg', 'blobs/test.jpg').run();
+    for (const operation of [
+      { type: 'create_asset', targetId: 'asset-album-snapshot', payload: { blobId: digest, folderId: 'system-inbox', displayName: 'Album asset' } },
+      { type: 'create_album', targetId: 'album-snapshot', payload: { name: 'Favorites' } }
+    ]) {
+      const response = await app.request('/v1/mutations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Idempotency-Key': `create-${operation.targetId}` },
+        body: JSON.stringify({ operations: [operation] })
+      }, env);
+      expect(response.status).toBe(200);
+    }
+    const membership = await app.request('/v1/mutations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Idempotency-Key': 'album-membership' },
+      body: JSON.stringify({ operations: [{
+        type: 'add_assets_to_album', targetId: 'album-snapshot', baseRevision: 1,
+        payload: { assetIds: ['asset-album-snapshot'] }
+      }] })
+    }, env);
+    expect(membership.status).toBe(200);
+
+    const bootstrap = await app.request('/v1/catalog/bootstrap?limit=20', { headers: { Authorization: `Bearer ${token}` } }, env);
+    const body = await bootstrap.json<{ entities: Array<{ entityId: string; revision: number; payload: { assetIds?: string[] } }> }>();
+    expect(body.entities.find((entity) => entity.entityId === 'album-snapshot')).toMatchObject({
+      revision: 2,
+      payload: { assetIds: ['asset-album-snapshot'] }
+    });
+  });
+
+  it('includes Phase 4 organization records without exposing original bytes', async () => {
+    const token = await enrollDevice(env, 'device-organization-bootstrap', ['library.read']);
+    await env.DB.prepare("INSERT INTO tags (id, name, revision) VALUES ('tag-review', 'status:review', 1)").run();
+    await env.DB.prepare(
+      "INSERT INTO saved_searches (id, name, rules_json, sort_json, revision) VALUES ('search-review', 'Needs Review', ?, ?, 1)"
+    ).bind(JSON.stringify({ tagIds: ['tag-review'] }), JSON.stringify({ key: 'modifiedAt', direction: 'descending' })).run();
+    await env.DB.prepare(
+      "INSERT INTO export_receipts (id, manifest_sha256, asset_ids_json, revision) VALUES ('export-review', ?, '[]', 1)"
+    ).bind('c'.repeat(64)).run();
+    await env.DB.prepare(
+      "INSERT INTO backup_manifests (id, manifest_sha256, last_restore_drill_result, revision) VALUES ('backup-review', ?, 'passed', 1)"
+    ).bind('d'.repeat(64)).run();
+
+    const bootstrap = await app.request('/v1/catalog/bootstrap?limit=20', { headers: { Authorization: `Bearer ${token}` } }, env);
+    const body = await bootstrap.json<{ entities: Array<{ entityType: string; entityId: string; payload: Record<string, unknown> }> }>();
+    expect(body.entities.find((entity) => entity.entityId === 'tag-review')).toMatchObject({
+      entityType: 'tag', payload: { name: 'status:review', assetIds: [] }
+    });
+    expect(body.entities.find((entity) => entity.entityId === 'search-review')).toMatchObject({
+      entityType: 'saved_search', payload: { rules: { tagIds: ['tag-review'] } }
+    });
+    expect(body.entities.find((entity) => entity.entityId === 'export-review')?.payload).toEqual(expect.objectContaining({ manifestSHA256: 'c'.repeat(64), assetIds: [] }));
+    expect(body.entities.find((entity) => entity.entityId === 'backup-review')?.payload).toEqual(expect.objectContaining({ lastRestoreDrillResult: 'passed' }));
+  });
 });

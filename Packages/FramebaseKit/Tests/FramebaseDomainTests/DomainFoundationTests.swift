@@ -41,4 +41,18 @@ struct DomainFoundationTests {
         #expect(!asset.storageKey.rawValue.hasPrefix("/"))
         #expect(asset.localURL == nil)
     }
+
+    @Test("Hair Solutions taxonomy keeps review state in tags and avoids empty on-demand folders")
+    func hairSolutionsTaxonomy() {
+        #expect(HairSolutionsLibraryTemplate.folders.contains {
+            $0.path == ["00_inbox"] && $0.provisioning == .initial
+        })
+        #expect(HairSolutionsLibraryTemplate.folders.contains {
+            $0.path == ["04_lifestyle", "active"] && $0.provisioning == .onFirstUse
+        })
+        let status = HairSolutionsLibraryTemplate.tagNamespaces.first { $0.namespace == "status" }
+        #expect(status?.allowedValues.contains("review") == true)
+        #expect(status?.allowsMultipleValuesPerAsset == false)
+        #expect(HairSolutionsLibraryTemplate.tagNamespaces.contains { $0.namespace == "product" && $0.allowsCustomValues })
+    }
 }

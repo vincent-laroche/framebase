@@ -1,4 +1,5 @@
 import { Jwt } from 'hono/utils/jwt';
+import { webcrypto } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import app from '../src/index.js';
 import type { Bindings } from '../src/types.js';
@@ -122,5 +123,26 @@ describe('POST /v1/auth/enroll', () => {
 
     const token = (await enrolled.json<{ token: string }>()).token;
     expect((await app.request('/v1/changes', { headers: { Authorization: `Bearer ${token}` } }, env)).status).toBe(401);
+  });
+
+  it('requires a P-256 device signature to complete a pairing challenge', async () => {
+    const keys = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const spki = await webcrypto.subtle.exportKey('spki', keys.publicKey);
+    const publicKey = Buffer.from(spki).toString('base64url');
+    const challengeResponse = await app.request('/v1/auth/enroll/challenge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Pairing-Credential': env.ENROLLMENT_SECRET as string },
+      body: JSON.stringify({ deviceId: 'keypair-device', deviceName: 'Keypair Mac', publicKey, scopes: ['library.read'] })
+    }, env);
+    expect(challengeResponse.status).toBe(200);
+    const challenge = await challengeResponse.json<{ challengeId: string; challenge: string }>();
+    const payload = new TextEncoder().encode(`${challenge.challengeId}.keypair-device.${challenge.challenge}`);
+    const signature = await webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keys.privateKey, payload);
+    const complete = await app.request('/v1/auth/enroll/complete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challengeId: challenge.challengeId, signature: Buffer.from(signature).toString('base64url') })
+    }, env);
+    expect(complete.status).toBe(200);
+    expect((await complete.json<{ deviceId: string }>()).deviceId).toBe('keypair-device');
   });
 });

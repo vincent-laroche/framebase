@@ -4,6 +4,8 @@ import SwiftUI
 
 struct FoundationInspector: View {
     let model: LibraryWindowModel
+    @State private var proposedTagName = ""
+    @State private var proposedDisplayName = ""
 
     var body: some View {
         Group {
@@ -50,6 +52,10 @@ struct FoundationInspector: View {
 
             Section("File") {
                 LabeledContent("Name", value: asset.filename)
+                TextField("Display name", text: $proposedDisplayName)
+                    .onSubmit(saveProposedDisplayName)
+                Button("Save Display Name", action: saveProposedDisplayName)
+                    .disabled(proposedDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || proposedDisplayName == asset.displayName)
                 LabeledContent("Folder", value: folderName(asset.parentFolderID))
                 LabeledContent("Dimensions", value: dimensions(asset))
                 LabeledContent(
@@ -59,6 +65,11 @@ struct FoundationInspector: View {
                 LabeledContent("Created", value: formatted(asset.createdAt))
                 LabeledContent("Modified", value: formatted(asset.modifiedAt))
                 LabeledContent("Imported", value: formatted(asset.importedAt))
+                if case .missing = model.inspectorPreviewState, model.container.cloudSync != nil {
+                    Button("Download Verified Original") {
+                        Task { await model.materializeOriginal(asset.id) }
+                    }
+                }
             }
 
             Section("Organization") {
@@ -68,6 +79,20 @@ struct FoundationInspector: View {
                     ForEach(1...5, id: \.self) { value in
                         Text("\(value) star\(value == 1 ? "" : "s")").tag(value)
                     }
+                }
+                organizationActions
+            }
+
+            trashRecoveryState
+
+            tagEditor
+
+            if let candidate = model.selectedDuplicateCandidate {
+                Section("Exact-byte duplicate") {
+                    Text("This original has \(candidate.assetIDs.count - 1) verified exact-byte duplicate\(candidate.assetIDs.count == 2 ? "" : "s").")
+                    Text("Framebase will not merge, remove, or otherwise change candidates automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -92,6 +117,9 @@ struct FoundationInspector: View {
         }
         .formStyle(.grouped)
         .padding(.vertical)
+        .task(id: asset.id) {
+            proposedDisplayName = asset.displayName
+        }
     }
 
     private func multiAssetInspector(_ assets: [Asset]) -> some View {
@@ -133,7 +161,10 @@ struct FoundationInspector: View {
                         Text("\(value) star\(value == 1 ? "" : "s")").tag(value)
                     }
                 }
+                organizationActions
             }
+            trashRecoveryState
+            tagEditor
         }
         .formStyle(.grouped)
         .padding(.vertical)
@@ -170,6 +201,88 @@ struct FoundationInspector: View {
     private func previewPlaceholder(_ symbol: String, _ label: String) -> some View {
         Label(label, systemImage: symbol)
             .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var organizationActions: some View {
+        if !model.availableMoveDestinations.isEmpty {
+            Menu("Move To") {
+                ForEach(model.availableMoveDestinations, id: \.id) { folder in
+                    Button(folder.name.rawValue) {
+                        Task { await model.moveAssets(model.selectedAssetIDs, to: folder.id) }
+                    }
+                }
+            }
+        }
+        if model.navigationTarget == .trash {
+            Button("Restore from Trash") { Task { await model.restoreSelectedAssets() } }
+        } else {
+            Button("Move to Trash", role: .destructive) { Task { await model.trashSelectedAssets() } }
+        }
+        if model.selectedAssetIDs.count == 1, let assetID = model.selectedAssetIDs.first {
+            Button("Reveal Original in Finder") {
+                Task { await model.revealOriginal(assetID) }
+            }
+        }
+        Button("Export Selection…") {
+            guard let destinationURL = LibraryPanelService.chooseExportDirectory() else { return }
+            Task { await model.exportSelectedAssets(to: destinationURL) }
+        }
+    }
+
+    @ViewBuilder
+    private var trashRecoveryState: some View {
+        if !model.selectedTrashReceipts.isEmpty {
+            Section("Trash retention") {
+                let earliestPurge = model.selectedTrashReceipts.map(\.scheduledPurgeAt).min() ?? .now
+                LabeledContent("Scheduled purge review", value: earliestPurge.formatted(date: .abbreviated, time: .shortened))
+                Text("Purge is intentionally locked. Originals cannot be deleted from this screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Review Permanent Purge…", action: {})
+                    .disabled(true)
+            }
+        }
+    }
+
+    private var tagEditor: some View {
+        Section("Tags") {
+            if model.selectedTags.isEmpty {
+                Text("No common tags")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(model.selectedTags) { tag in
+                    HStack {
+                        Text(tag.name.rawValue)
+                            .accessibilityIdentifier("inspector.tag.\(tag.name.rawValue)")
+                        Spacer()
+                        Button("Remove", role: .destructive) {
+                            Task { await model.removeTag(tag.id) }
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+            }
+            HStack {
+                TextField("namespace:value", text: $proposedTagName)
+                    .onSubmit(addProposedTag)
+                    .accessibilityIdentifier("inspector.tagName")
+                Button("Add", action: addProposedTag)
+                    .accessibilityIdentifier("inspector.addTag")
+                    .disabled(proposedTagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private func addProposedTag() {
+        let name = proposedTagName
+        proposedTagName = ""
+        Task { await model.addTag(named: name) }
+    }
+
+    private func saveProposedDisplayName() {
+        let displayName = proposedDisplayName
+        Task { await model.renameSelectedAsset(to: displayName) }
     }
 
     private func favoriteBinding(_ value: Bool) -> Binding<Bool> {

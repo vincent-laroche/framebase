@@ -7,6 +7,8 @@ struct LibraryWindowView: View {
     @SceneStorage("library.inspectorVisible") private var storedInspectorVisible = true
     @SceneStorage("library.expandedFoldersByCatalog") private var storedExpandedFoldersByCatalog = ""
     @AppStorage("browser.thumbnailSize") private var storedThumbnailSize = 176.0
+    @SceneStorage("library.browserPresentation") private var storedBrowserPresentation = AssetBrowserPresentation.grid.rawValue
+    @State private var isSaveSearchPresented = false
 
     init(container: AppContainer) {
         _model = State(initialValue: LibraryWindowModel(container: container))
@@ -24,6 +26,11 @@ struct LibraryWindowView: View {
                 onRenameFolder: { folderID, proposedName in
                     Task {
                         await model.renameFolder(folderID, to: proposedName)
+                    }
+                },
+                onRenameAlbum: { albumID, proposedName in
+                    Task {
+                        await model.renameAlbum(albumID, to: proposedName)
                     }
                 },
                 onContextAction: handleSidebarContextAction,
@@ -51,6 +58,7 @@ struct LibraryWindowView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 320)
         } detail: {
             FoundationAssetBrowser(model: model)
+                .searchable(text: searchTextBinding, placement: .toolbar, prompt: "Search names, camera, folders, tags…")
                 .dropDestination(for: URL.self) { urls, _ in
                     guard model.container.canBrowseLibrary, !urls.isEmpty else { return false }
                     Task {
@@ -89,6 +97,97 @@ struct LibraryWindowView: View {
                     Label("Sort", systemImage: "arrow.up.arrow.down")
                 }
 
+                Menu {
+                    Button("Clear Filters", action: model.clearAssetFilters)
+                    Divider()
+                    Menu("Tags") {
+                        ForEach(model.tags) { tag in
+                            Button {
+                                model.toggleTagFilter(tag.id)
+                            } label: {
+                                Label(
+                                    tag.name.rawValue,
+                                    systemImage: model.assetFilter.tagIDs.contains(tag.id) ? "checkmark" : "tag"
+                                )
+                            }
+                        }
+                    }
+                    Menu("Favorite") {
+                        Button("Any") { model.setFavoriteFilter(nil) }
+                        Button("Favorites Only") { model.setFavoriteFilter(true) }
+                        Button("Not Favorites") { model.setFavoriteFilter(false) }
+                    }
+                } label: {
+                    Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+                }
+
+                Menu {
+                    Button("Save Current Search…") { isSaveSearchPresented = true }
+                    if !model.savedSearches.isEmpty {
+                        Divider()
+                        ForEach(model.savedSearches) { savedSearch in
+                            Menu(savedSearch.name.rawValue) {
+                                Button("Apply") { model.applySavedSearch(savedSearch) }
+                                Button("Delete", role: .destructive) {
+                                    Task { await model.deleteSavedSearch(savedSearch.id) }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Saved Searches", systemImage: "magnifyingglass.circle")
+                }
+                .disabled(!model.container.canBrowseLibrary)
+
+                Picker("View", selection: browserPresentationBinding) {
+                    Label("Grid", systemImage: "square.grid.2x2").tag(AssetBrowserPresentation.grid)
+                    Label("List", systemImage: "list.bullet").tag(AssetBrowserPresentation.list)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 108)
+
+                Menu {
+                    Button("New Album") { Task { await model.createAlbum() } }
+                    if !model.selectedAssetIDs.isEmpty, !model.albums.isEmpty {
+                        Divider()
+                        ForEach(model.albums) { album in
+                            Button("Add Selection to \(album.name)") {
+                                Task { await model.addSelectedAssets(to: album.id) }
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Albums", systemImage: "rectangle.stack.badge.plus")
+                }
+                .accessibilityIdentifier("toolbar.albums")
+                .disabled(!model.container.canBrowseLibrary)
+
+                Button {
+                    Task {
+                        if model.navigationTarget == .trash {
+                            await model.restoreSelectedAssets()
+                        } else {
+                            await model.trashSelectedAssets()
+                        }
+                    }
+                } label: {
+                    Label(
+                        model.navigationTarget == .trash ? "Restore" : "Move to Trash",
+                        systemImage: model.navigationTarget == .trash ? "arrow.uturn.backward" : "trash"
+                    )
+                }
+                .accessibilityIdentifier("toolbar.trashOrRestore")
+                .disabled(model.selectedAssetIDs.isEmpty)
+
+                Menu {
+                    Button("Apply Hair Solutions Template") {
+                        Task { await model.prepareHairSolutionsTemplateApplication() }
+                    }
+                } label: {
+                    Label("Library", systemImage: "folder.badge.gearshape")
+                }
+                .disabled(!model.container.canBrowseLibrary || model.container.cloudBackingIsActive)
+
                 Slider(value: thumbnailSizeBinding, in: 96...280, step: 8) {
                     Text("Thumbnail Size")
                 } minimumValueLabel: {
@@ -109,6 +208,7 @@ struct LibraryWindowView: View {
         .onAppear {
             model.isInspectorVisible = storedInspectorVisible
             model.thumbnailSize = storedThumbnailSize
+            model.browserPresentation = AssetBrowserPresentation(rawValue: storedBrowserPresentation) ?? .grid
         }
         .task {
             await model.container.restoreLibraryIfAvailable()
@@ -126,6 +226,9 @@ struct LibraryWindowView: View {
             Task {
                 await model.importAssets(from: urls)
             }
+        }
+        .onChange(of: model.browserPresentation) {
+            storedBrowserPresentation = model.browserPresentation.rawValue
         }
         .safeAreaInset(edge: .bottom) {
             if model.isImporting, let progress = model.importProgress {
@@ -151,6 +254,24 @@ struct LibraryWindowView: View {
             if let prompt = model.pendingFolderDeletion {
                 Text(deletionMessage(for: prompt))
             }
+        }
+        .sheet(item: hairSolutionsTemplatePreviewBinding) { preview in
+            HairSolutionsTemplateReviewSheet(
+                preview: preview,
+                apply: {
+                    Task { await model.applyHairSolutionsTemplate() }
+                },
+                cancel: model.dismissHairSolutionsTemplatePreview
+            )
+        }
+        .sheet(isPresented: $isSaveSearchPresented) {
+            SavedSearchSheet(
+                save: { name in
+                    Task { await model.saveCurrentSearch(named: name) }
+                    isSaveSearchPresented = false
+                },
+                cancel: { isSaveSearchPresented = false }
+            )
         }
         .alert("Framebase Couldn’t Complete That Action", isPresented: statusMessageBinding) {
             Button("OK") {
@@ -206,12 +327,31 @@ struct LibraryWindowView: View {
         )
     }
 
+    private var searchTextBinding: Binding<String> {
+        Binding(get: { model.searchText }, set: { model.searchText = $0 })
+    }
+
+    private var browserPresentationBinding: Binding<AssetBrowserPresentation> {
+        Binding(get: { model.browserPresentation }, set: { model.browserPresentation = $0 })
+    }
+
     private var deletionPromptBinding: Binding<Bool> {
         Binding(
             get: { model.pendingFolderDeletion != nil },
             set: { isPresented in
                 if !isPresented {
                     model.cancelPendingFolderDeletion()
+                }
+            }
+        )
+    }
+
+    private var hairSolutionsTemplatePreviewBinding: Binding<LibraryTemplateApplicationPreview?> {
+        Binding(
+            get: { model.hairSolutionsTemplatePreview },
+            set: { preview in
+                if preview == nil {
+                    model.dismissHairSolutionsTemplatePreview()
                 }
             }
         )
@@ -290,6 +430,10 @@ struct LibraryWindowView: View {
             Task {
                 await model.prepareToDeleteFolder(folderID)
             }
+        case .createAlbum:
+            Task { await model.createAlbum() }
+        case let .deleteAlbum(albumID):
+            Task { await model.deleteAlbum(albumID) }
         }
     }
 
@@ -348,5 +492,98 @@ struct LibraryWindowView: View {
         .padding(.vertical, 10)
         .background(.bar)
         .accessibilityIdentifier("import.progress")
+    }
+}
+
+private struct HairSolutionsTemplateReviewSheet: View {
+    let preview: LibraryTemplateApplicationPreview
+    let apply: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Apply Hair Solutions Template")
+                .font(.title2.weight(.semibold))
+            Text(summary)
+                .foregroundStyle(.secondary)
+
+            GroupBox("Folders to create (\(preview.folderPathsToCreate.count))") {
+                reviewList(preview.folderPathsToCreate)
+            }
+            GroupBox("Controlled tags to create (\(preview.tagNamesToCreate.count))") {
+                reviewList(preview.tagNamesToCreate.map(\.rawValue))
+            }
+            Text("\(preview.onFirstUseFolderPaths.count) on-first-use folders remain available vocabulary and will not be created. Existing folders and tags are left unchanged. No assets or original files will move.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel)
+                Button("Apply Template", action: apply)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 620, height: 620)
+    }
+
+    private var summary: String {
+        if preview.folderPathsToCreate.isEmpty && preview.tagNamesToCreate.isEmpty {
+            return "This library already has every initial folder and controlled tag in the template."
+        }
+        return "Review the exact logical catalog additions below before applying them."
+    }
+
+    @ViewBuilder
+    private func reviewList(_ items: [String]) -> some View {
+        if items.isEmpty {
+            Text("Nothing new")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(items, id: \.self) { item in
+                        Text(item)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .frame(maxHeight: 150)
+        }
+    }
+}
+
+private struct SavedSearchSheet: View {
+    let save: (String) -> Void
+    let cancel: () -> Void
+    @State private var name = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Save Search")
+                .font(.title2.weight(.semibold))
+            Text("Save the current text, tag, favorite, date, rating, and album filters with the selected sort order.")
+                .foregroundStyle(.secondary)
+            TextField("Name", text: $name)
+                .onSubmit(saveSearch)
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel)
+                Button("Save", action: saveSearch)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+    }
+
+    private func saveSearch() {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        save(name)
     }
 }

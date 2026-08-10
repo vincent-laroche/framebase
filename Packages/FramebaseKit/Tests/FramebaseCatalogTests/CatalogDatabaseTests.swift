@@ -45,6 +45,114 @@ struct CatalogDatabaseTests {
         #expect(snapshot == 1)
     }
 
+    @Test("Legacy organization tables upgrade without losing memberships, searches, or Trash recovery state")
+    func legacyOrganizationSchemaUpgrades() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let folder = try await database.folders.createFolder(named: FolderName("Legacy folder"), in: nil)
+        let asset = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAsset(asset)
+        let tagID = TagID()
+        let searchID = SavedSearchID()
+        let now = Int64(1_700_000_000_000)
+        let legacyQuery = #"""
+            {"criteria":{"text":"portrait","folderPathText":"Legacy folder","capturedDateRange":null,"rating":null,"favorite":true,"tagIDs":[],"albumIDs":[]}}
+            """#
+
+        try await database.databasePool.write { db in
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('v4_complete_organization', 'v5_organization_cloud_parity')")
+            try db.execute(sql: "DROP TABLE export_receipts")
+            try db.execute(sql: "DROP TABLE backup_manifests")
+            try db.execute(sql: "DROP TABLE asset_trash")
+            try db.execute(sql: "DROP TABLE saved_searches")
+            try db.execute(sql: "DROP TABLE asset_tags")
+            try db.execute(sql: "DROP TABLE tags")
+            try db.execute(sql: "DROP TABLE remote_entity_state")
+            try db.execute(sql: """
+                CREATE TABLE remote_entity_state (
+                    entity_type TEXT NOT NULL CHECK(entity_type IN ('folder', 'album')),
+                    entity_id TEXT NOT NULL CHECK(entity_id = lower(entity_id) AND length(entity_id) = 36),
+                    remote_revision INTEGER NOT NULL CHECK(remote_revision >= 0),
+                    updated_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(entity_type, entity_id)
+                );
+                CREATE INDEX remote_entity_state_revision_index
+                    ON remote_entity_state(entity_type, remote_revision);
+                CREATE TABLE tags (
+                    id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+                    name TEXT NOT NULL COLLATE NOCASE CHECK(name = trim(name) AND length(name) BETWEEN 1 AND 255),
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    sort_order INTEGER NOT NULL
+                );
+                CREATE UNIQUE INDEX tags_name_unique ON tags(name COLLATE NOCASE);
+                CREATE TABLE asset_tags (
+                    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
+                    tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT,
+                    added_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(asset_id, tag_id)
+                );
+                CREATE INDEX asset_tags_tag_index ON asset_tags(tag_id, asset_id);
+                CREATE TABLE saved_searches (
+                    id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+                    name TEXT NOT NULL COLLATE NOCASE CHECK(name = trim(name) AND length(name) BETWEEN 1 AND 255),
+                    query_json TEXT NOT NULL CHECK(json_valid(query_json)),
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    sort_order INTEGER NOT NULL
+                );
+                CREATE UNIQUE INDEX saved_searches_name_unique ON saved_searches(name COLLATE NOCASE);
+                CREATE INDEX saved_searches_sort_index ON saved_searches(sort_order, name COLLATE NOCASE, id);
+                CREATE TABLE asset_trash (
+                    asset_id TEXT PRIMARY KEY NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                    prior_folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE RESTRICT,
+                    trashed_at_ms INTEGER NOT NULL,
+                    expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms >= trashed_at_ms)
+                );
+                CREATE INDEX asset_trash_expiry_index ON asset_trash(expires_at_ms, asset_id);
+                """)
+            try db.execute(
+                sql: "INSERT INTO tags (id, name, created_at_ms, updated_at_ms, sort_order) VALUES (?, 'Client Work', ?, ?, 1024)",
+                arguments: [tagID.description, now, now]
+            )
+            try db.execute(
+                sql: "INSERT INTO asset_tags (asset_id, tag_id, added_at_ms) VALUES (?, ?, ?)",
+                arguments: [asset.id.description, tagID.description, now]
+            )
+            try db.execute(
+                sql: "INSERT INTO saved_searches (id, name, query_json, created_at_ms, updated_at_ms, sort_order) VALUES (?, 'Portraits', ?, ?, ?, 1024)",
+                arguments: [searchID.description, legacyQuery, now, now]
+            )
+            try db.execute(
+                sql: "INSERT INTO asset_trash (asset_id, prior_folder_id, trashed_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)",
+                arguments: [asset.id.description, folder.id.description, now, now + 86_400_000]
+            )
+        }
+
+        let upgraded = try CatalogDatabase(catalogURL: temporary.databaseURL)
+        let migratedTag = try #require(try await upgraded.tags.tags().first)
+        #expect(migratedTag.id == tagID)
+        #expect(migratedTag.name.rawValue == "legacy:client-work")
+        let migratedSearch = try #require(try await upgraded.savedSearches.savedSearches().first)
+        #expect(migratedSearch.id == searchID)
+        #expect(migratedSearch.filter.text == "portrait")
+        #expect(migratedSearch.filter.folderPath == "Legacy folder")
+        #expect(migratedSearch.filter.favorite == true)
+        #expect(try await upgraded.assets.trashedAssets(sortedBy: .defaultSort).records.map(\.id) == [asset.id])
+        #expect((try await upgraded.tags.tags(for: [asset.id]))[asset.id]?.isEmpty ?? true)
+
+        try await upgraded.assets.restoreAssets([asset.id])
+        #expect(try await upgraded.assets.asset(id: asset.id)?.parentFolderID == folder.id)
+        #expect((try await upgraded.tags.tags(for: [asset.id]))[asset.id]?.map(\.id) == [tagID])
+        let migrationIdentifiers = try await upgraded.databasePool.read { db in
+            try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
+        }
+        #expect(migrationIdentifiers.contains("v4_complete_organization"))
+        #expect(migrationIdentifiers.contains("v5_organization_cloud_parity"))
+        #expect(migrationIdentifiers.contains("v6_receipt_cloud_parity"))
+        #expect(migrationIdentifiers.contains("v7_backup_cloud_parity"))
+    }
+
     @Test("Schema enforces identifiers, names, ratings, and foreign keys")
     func schemaConstraints() async throws {
         let temporary = try TemporaryCatalog()
@@ -163,6 +271,123 @@ struct CatalogDatabaseTests {
         #expect(try await database.assets.count(matching: AssetQuery(scope: .favorites)) == 1)
     }
 
+    @Test("Tags, saved searches, scoped query filters, albums, and trash remain reversible")
+    func organizationSearchAndTrash() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let products = try await database.folders.createFolder(named: FolderName("Products"), in: nil)
+        let hero = try await database.folders.createFolder(named: FolderName("Hero"), in: products.id)
+        var first = try makeAsset(parentFolderID: hero.id, filename: "alpha-hero.jpg")
+        first.displayName = "Alpha Hero"
+        first.metadata = AssetMetadata(exif: EXIFMetadata(cameraMake: "Canon", cameraModel: "R5"))
+        var second = try makeAsset(parentFolderID: hero.id, filename: "beta-detail.jpg")
+        second.displayName = "Beta Detail"
+        second.createdAt = Date(timeIntervalSince1970: 1_700_000_100)
+        try await database.insertAssets([first, second])
+
+        let productTag = try await database.tags.createTag(named: TagName("product:thin-skin-pro"))
+        let statusTag = try await database.tags.createTag(named: TagName("status:review"))
+        try await database.tags.addTags([productTag.id, statusTag.id], to: [first.id])
+        #expect(try await database.tags.tags(for: [first.id])[first.id]?.map(\.name.rawValue) == ["product:thin-skin-pro", "status:review"])
+
+        let album = try await database.albums.createAlbum(named: "Launch selects")
+        try await database.albums.addAssets([first.id], to: album.id)
+        try await database.albums.renameAlbum(album.id, to: "Launch Selects")
+        let secondAlbum = try await database.albums.createAlbum(named: "Secondary")
+        try await database.albums.reorderAlbum(secondAlbum.id, after: album.id)
+        #expect(try await database.albums.albums().map(\.id) == [album.id, secondAlbum.id])
+
+        let filter = AssetFilter(
+            text: "canon",
+            folderPath: "Products/Hero",
+            tagIDs: [productTag.id, statusTag.id],
+            albumIDs: [album.id],
+            dateRange: first.createdAt...first.createdAt,
+            rating: .unrated,
+            favorite: false
+        )
+        let query = AssetQuery(scope: .allAssets, filter: filter)
+        #expect(try await database.assets.orderedIDs(matching: query, sortedBy: .defaultSort) == [first.id])
+
+        let search = SavedSearch(name: try SavedSearchName("Needs Review"), filter: filter)
+        try await database.savedSearches.save(search)
+        #expect(try await database.savedSearches.savedSearches().first?.filter == filter)
+
+        let receipts = try await database.assets.trashAssets([first.id], retentionDays: 30)
+        #expect(receipts.count == 1)
+        #expect(receipts.first?.priorFolderID == hero.id)
+        #expect(receipts.first?.albumIDs == [album.id])
+        #expect(Set(receipts.first?.tagIDs ?? []) == [productTag.id, statusTag.id])
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .allAssets)) == 1)
+        #expect(try await database.assets.trashedAssets(sortedBy: .defaultSort).records.map(\.id) == [first.id])
+
+        let transientAlbum = try await database.albums.createAlbum(named: "Temporary trash edits")
+        let transientTag = try await database.tags.createTag(named: TagName("campaign:temporary"))
+        try await database.albums.addAssets([first.id], to: transientAlbum.id)
+        try await database.tags.addTags([transientTag.id], to: [first.id])
+
+        try await database.assets.restoreAssets([first.id])
+        #expect(try await database.assets.asset(id: first.id)?.parentFolderID == hero.id)
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .allAssets)) == 2)
+        #expect(Set(try await database.tags.tags(for: [first.id])[first.id]?.map(\.id) ?? []) == [productTag.id, statusTag.id])
+        #expect(try await database.assets.orderedIDs(matching: AssetQuery(scope: .album(album.id)), sortedBy: .defaultSort) == [first.id])
+        #expect(try await database.assets.orderedIDs(matching: AssetQuery(scope: .album(transientAlbum.id)), sortedBy: .defaultSort).isEmpty)
+
+        let approvedTag = try await database.tags.createTag(named: TagName("status:approved"))
+        try await database.tags.addTags([approvedTag.id], to: [first.id])
+        #expect(try await database.tags.tags(for: [first.id])[first.id]?.filter { $0.name.namespace == "status" }.map(\.name.rawValue) == ["status:approved"])
+        do {
+            _ = try await database.tags.createTag(named: TagName("status:unreviewed"))
+            Issue.record("Expected unsupported controlled tag value to fail")
+        } catch {
+            #expect(error as? DomainValidationError == .invalidTagName)
+        }
+    }
+
+    @Test("Hair Solutions template is additive and creates only declared initial vocabulary")
+    func hairSolutionsTemplateApplication() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let preview = try await database.previewHairSolutionsLibraryTemplate()
+        #expect(preview.folderPathsToCreate.contains("06_web/home/hero"))
+        #expect(preview.tagNamesToCreate.contains { $0.rawValue == "status:review" })
+        #expect(preview.onFirstUseFolderPaths.contains("04_lifestyle/active"))
+        let first = try await database.applyHairSolutionsLibraryTemplate()
+        #expect(!first.createdFolderIDs.isEmpty)
+        #expect(!first.createdTagIDs.isEmpty)
+        let tree = try await database.folders.treeSnapshot()
+        #expect(tree.folders.contains { $0.name.rawValue == "00_inbox" })
+        #expect(tree.folders.contains { $0.name.rawValue == "hero" })
+        #expect(!tree.folders.contains { $0.name.rawValue == "active" })
+        #expect(try await database.tags.tags().contains { $0.name.rawValue == "status:review" })
+        #expect(try await database.tags.tags().contains { $0.name.rawValue == "channel:instagram" })
+
+        let second = try await database.applyHairSolutionsLibraryTemplate()
+        #expect(second.createdFolderIDs.isEmpty)
+        #expect(second.createdTagIDs.isEmpty)
+        let appliedPreview = try await database.previewHairSolutionsLibraryTemplate()
+        #expect(appliedPreview.folderPathsToCreate.isEmpty)
+        #expect(appliedPreview.tagNamesToCreate.isEmpty)
+
+        let receipt = AssetExportReceipt(
+            manifestSHA256: String(repeating: "a", count: 64),
+            assetIDs: [AssetID()]
+        )
+        try await database.exports.record(receipt)
+        let persistedReceipt = try #require(try await database.exports.receipts().first)
+        #expect(persistedReceipt.id == receipt.id)
+        #expect(persistedReceipt.manifestSHA256 == receipt.manifestSHA256)
+        #expect(persistedReceipt.assetIDs == receipt.assetIDs)
+
+        let backup = BackupManifest(manifestSHA256: String(repeating: "b", count: 64))
+        try await database.backups.record(backup)
+        try await database.backups.recordRestoreDrill(manifestID: backup.id, result: "passed")
+        let persistedBackup = try #require(try await database.backups.manifests().first)
+        #expect(persistedBackup.id == backup.id)
+        #expect(persistedBackup.manifestSHA256 == backup.manifestSHA256)
+        #expect(persistedBackup.lastRestoreDrillResult == "passed")
+    }
+
     @Test("Asset batch insertion is atomic")
     func batchInsertionRollback() async throws {
         let temporary = try TemporaryCatalog()
@@ -174,6 +399,159 @@ struct CatalogDatabaseTests {
             try await database.insertAssets([valid, invalid])
         }
         #expect(try await database.assets.count(matching: AssetQuery(scope: .allAssets)) == 0)
+    }
+
+    @Test("Cloud migration state is additive, durable, and leaves local assets intact")
+    func cloudMigrationSpine() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let asset = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAsset(asset)
+
+        let manifest = try await database.cloud.captureMigrationManifest(at: Date(timeIntervalSince1970: 100))
+        #expect(manifest.count == 1)
+        #expect(manifest[0].assetID == asset.id)
+        #expect(manifest[0].storageKey == asset.storageKey)
+        #expect(manifest[0].sha256 == nil)
+
+        let digest = String(repeating: "a", count: 64)
+        try await database.cloud.recordHash(digest, for: asset.id)
+        let blob = CloudBlob(
+            sha256: digest,
+            byteSize: asset.fileSize,
+            mediaType: "image/jpeg",
+            originalExtension: "jpg",
+            remoteBlobID: digest,
+            verificationState: .verified,
+            verifiedAt: Date(timeIntervalSince1970: 200)
+        )
+        try await database.cloud.upsertBlob(blob, at: Date(timeIntervalSince1970: 200))
+        try await database.cloud.associate(AssetCloudState(assetID: asset.id, blobSHA256: digest))
+
+        let byteDuplicate = try makeAsset(parentFolderID: database.inboxID, filename: "duplicate.jpg")
+        try await database.insertAsset(byteDuplicate)
+        try await database.cloud.associate(AssetCloudState(assetID: byteDuplicate.id, blobSHA256: digest))
+
+        #expect(try await database.cloud.migrationManifest().first?.sha256 == digest)
+        #expect(try await database.cloud.blob(sha256: digest)?.verificationState == .verified)
+        #expect(try await database.cloud.cloudState(for: asset.id)?.materializationState == .localVerified)
+        #expect(try await database.assets.asset(id: asset.id)?.storageKey == asset.storageKey)
+        #expect(try await database.cloud.duplicateCandidates() == [DuplicateCandidate(sha256: digest, assetIDs: [asset.id, byteDuplicate.id].sorted { $0.description < $1.description })])
+
+        let outbox = SyncOutboxEntry(
+            idempotencyKey: "fixture-mutation-0001",
+            operation: "update_rating",
+            payload: Data("{}".utf8),
+            nextAttemptAt: Date(timeIntervalSince1970: 0)
+        )
+        try await database.cloud.appendOutbox(outbox)
+        #expect(try await database.cloud.dueOutboxEntries(at: Date(timeIntervalSince1970: 1)).map(\.id) == [outbox.id])
+        try await database.cloud.recordConflict(SyncConflict(
+            entityType: "asset", entityID: asset.id.description,
+            localPayload: Data("local".utf8), remotePayload: Data("remote".utf8)
+        ))
+        let status = try await database.cloud.status()
+        #expect(status.pendingOutboxCount == 1)
+        #expect(status.unresolvedConflictCount == 1)
+    }
+
+    @Test("Remote tag and saved-search records retain IDs, membership, and revisions")
+    func remoteOrganizationRecords() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let asset = try makeAsset(parentFolderID: database.inboxID)
+        try await database.insertAsset(asset)
+        let tag = Tag(id: TagID(), name: try TagName("status:review"))
+        let search = SavedSearch(
+            id: SavedSearchID(),
+            name: try SavedSearchName("Needs Review"),
+            filter: AssetFilter(tagIDs: [tag.id]),
+            sort: AssetSort(key: .modifiedAt, direction: .descending)
+        )
+
+        try await database.cloud.applyRemoteRecords([
+            .tag(tag: tag, assetIDs: [asset.id], revision: 7),
+            .savedSearch(search: search, revision: 11)
+        ])
+
+        #expect(try await database.tags.tags().map(\.id).contains(tag.id))
+        #expect(try await database.tags.tags(for: [asset.id])[asset.id]?.map(\.id) == [tag.id])
+        #expect(try await database.savedSearches.savedSearches().first?.id == search.id)
+        #expect(try await database.cloud.remoteRevision(entityType: "tag", entityID: tag.id.description) == 7)
+        #expect(try await database.cloud.remoteRevision(entityType: "saved_search", entityID: search.id.description) == 11)
+    }
+
+    @Test("Remote Trash receipt keeps originals untouched and restores the logical recovery state")
+    func remoteTrashRecord() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let folder = try await database.folders.createFolder(named: FolderName("Keep"), in: nil)
+        let asset = try makeAsset(parentFolderID: folder.id)
+        try await database.insertAsset(asset)
+        let blob = CloudBlob(sha256: String(repeating: "f", count: 64), byteSize: asset.fileSize, mediaType: "image/jpeg", originalExtension: "jpg", remoteBlobID: String(repeating: "f", count: 64), verificationState: .verified)
+        let album = try await database.albums.createAlbum(named: "Trash receipt album")
+        try await database.albums.addAssets([asset.id], to: album.id)
+        let tag = try await database.tags.createTag(named: TagName("status:review"))
+        try await database.tags.addTags([tag.id], to: [asset.id])
+        let receipt = AssetTrashReceipt(assetID: asset.id, priorFolderID: folder.id, albumIDs: [album.id], tagIDs: [tag.id], trashedAt: .now, scheduledPurgeAt: .now.addingTimeInterval(86_400))
+        try await database.cloud.applyRemoteRecords([.asset(asset: asset, blob: blob, trashReceipt: receipt, revision: 4)])
+        #expect(try await database.assets.asset(id: asset.id)?.parentFolderID == database.inboxID)
+        #expect(try await database.assets.trashedAssets(sortedBy: .defaultSort).records.map(\.id) == [asset.id])
+        #expect(try await database.assets.trashReceipts(for: [asset.id]).first?.priorFolderID == folder.id)
+        #expect(try await database.assets.count(matching: AssetQuery(scope: .album(album.id))) == 0)
+        #expect((try await database.tags.tags(for: [asset.id]))[asset.id]?.isEmpty ?? true)
+    }
+
+    @Test("Remote organization tombstones remove local entities but retain their revisions")
+    func remoteOrganizationTombstones() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let album = try await database.albums.createAlbum(named: "Retire")
+        let tag = try await database.tags.createTag(named: TagName("status:review"))
+        let search = SavedSearch(name: try SavedSearchName("Retire"), filter: .init())
+        try await database.savedSearches.save(search)
+
+        try await database.cloud.applyRemoteDeletion(entityType: "album", entityID: album.id.description, revision: 4)
+        try await database.cloud.applyRemoteDeletion(entityType: "tag", entityID: tag.id.description, revision: 5)
+        try await database.cloud.applyRemoteDeletion(entityType: "saved_search", entityID: search.id.description, revision: 6)
+
+        #expect(try await database.albums.albums().isEmpty)
+        #expect(try await database.tags.tags().isEmpty)
+        #expect(try await database.savedSearches.savedSearches().isEmpty)
+        #expect(try await database.cloud.remoteRevision(entityType: "album", entityID: album.id.description) == 4)
+        #expect(try await database.cloud.remoteRevision(entityType: "tag", entityID: tag.id.description) == 5)
+        #expect(try await database.cloud.remoteRevision(entityType: "saved_search", entityID: search.id.description) == 6)
+    }
+
+    @Test("Remote export receipts retain their immutable manifest evidence and revision")
+    func remoteExportReceipt() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let receipt = AssetExportReceipt(manifestSHA256: String(repeating: "a", count: 64), assetIDs: [])
+        try await database.cloud.applyRemoteRecords([.exportReceipt(receipt: receipt, revision: 8)])
+
+        let persisted = try #require(try await database.exports.receipts().first)
+        #expect(persisted.id == receipt.id)
+        #expect(persisted.manifestSHA256 == receipt.manifestSHA256)
+        #expect(persisted.assetIDs == receipt.assetIDs)
+        #expect(try await database.cloud.remoteRevision(entityType: "export_receipt", entityID: receipt.id.description) == 8)
+    }
+
+    @Test("Remote backup manifests retain restore-drill evidence and revision")
+    func remoteBackupManifest() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let manifest = BackupManifest(
+            manifestSHA256: String(repeating: "b", count: 64),
+            lastRestoreDrillAt: .now,
+            lastRestoreDrillResult: "passed"
+        )
+        try await database.cloud.applyRemoteRecords([.backupManifest(manifest: manifest, revision: 9)])
+
+        let persisted = try #require(try await database.backups.manifests().first)
+        #expect(persisted.id == manifest.id)
+        #expect(persisted.lastRestoreDrillResult == "passed")
+        #expect(try await database.cloud.remoteRevision(entityType: "backup_manifest", entityID: manifest.id.description) == 9)
     }
 
     @Test("A 100,000-asset catalog pages and sorts within the local acceptance budget")
@@ -469,6 +847,31 @@ struct CatalogDatabaseTests {
         try await database.assets.updateFavorite(true, for: [asset.id])
         let updatedAssetChange = try #require(try await assetIterator.next())
         #expect(updatedAssetChange.areas == [.assets])
+    }
+
+    @Test("Remote catalog application preserves identities and marks unknown originals remote-only")
+    func remoteCatalogApplication() async throws {
+        let temporary = try TemporaryCatalog()
+        let database = temporary.database
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let folder = Folder(id: FolderID(), name: try FolderName("Remote"), createdAt: date, updatedAt: date, sortOrder: 1_024)
+        let asset = try makeAsset(parentFolderID: folder.id, filename: "remote.jpg", importedAt: date)
+        let blob = CloudBlob(
+            sha256: String(repeating: "a", count: 64), byteSize: asset.fileSize, mediaType: "image/jpeg",
+            originalExtension: "jpg", remoteBlobID: String(repeating: "a", count: 64), verificationState: .verified, verifiedAt: date
+        )
+
+        try await database.cloud.applyRemoteRecords([
+            .folder(folder: folder, revision: 4),
+            .asset(asset: asset, blob: blob, trashReceipt: nil, revision: 5)
+        ], at: date)
+
+        let restored = try #require(try await database.assets.asset(id: asset.id))
+        #expect(restored.id == asset.id)
+        #expect(restored.storageKey == asset.storageKey)
+        #expect(try await database.assets.page(matching: AssetQuery(scope: .allAssets), sortedBy: .defaultSort, offset: 0, limit: 10).records.first?.originalAvailable == false)
+        #expect(try await database.cloud.cloudState(for: asset.id)?.remoteRevision == 5)
+        #expect(try await database.cloud.remoteRevision(entityType: "folder", entityID: folder.id.description) == 4)
     }
 }
 

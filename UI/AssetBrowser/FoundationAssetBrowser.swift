@@ -22,28 +22,93 @@ struct FoundationAssetBrowser: View {
                     }
                     .accessibilityIdentifier("assetBrowser.empty.\(model.navigationTarget.title)")
                 } else {
-                    NativeAssetCollection(
-                        records: model.assetGridRecords,
-                        thumbnailStates: model.thumbnailStates,
-                        selectedAssetIDs: model.selectedAssetIDs,
-                        thumbnailSize: model.thumbnailSize,
-                        onSelectionChanged: { ids, anchorID in
-                            model.selectedAssetIDs = ids
-                            model.selectionAnchorID = anchorID
-                            model.keyboardFocusedAssetID = anchorID
-                        },
-                        onRequestThumbnail: { record, scale in
-                            model.requestThumbnail(for: record, displayScale: scale)
-                        },
-                        onCancelThumbnail: model.cancelThumbnail,
-                        onNearEnd: model.loadNextAssetPageIfNeeded,
-                        onSelectAll: model.selectAllVisibleAssets
-                    )
-                    .accessibilityIdentifier("assetBrowser.grid")
+                    if model.browserPresentation == .grid {
+                        NativeAssetCollection(
+                            records: model.assetGridRecords,
+                            thumbnailStates: model.thumbnailStates,
+                            selectedAssetIDs: model.selectedAssetIDs,
+                            thumbnailSize: model.thumbnailSize,
+                            onSelectionChanged: { ids, anchorID in
+                                model.selectedAssetIDs = ids
+                                model.selectionAnchorID = anchorID
+                                model.keyboardFocusedAssetID = anchorID
+                            },
+                            onRequestThumbnail: { record, scale in
+                                model.requestThumbnail(for: record, displayScale: scale)
+                            },
+                            onCancelThumbnail: model.cancelThumbnail,
+                            onNearEnd: model.loadNextAssetPageIfNeeded,
+                            onSelectAll: model.selectAllVisibleAssets
+                        )
+                        .accessibilityIdentifier("assetBrowser.grid")
+                    } else {
+                        AssetMetadataList(
+                            records: model.assetGridRecords,
+                            selectedAssetIDs: listSelectionBinding,
+                            sort: model.assetSort,
+                            setSort: { model.assetSort = $0 }
+                        )
+                        .accessibilityIdentifier("assetBrowser.list")
+                    }
                 }
             }
         }
         .navigationTitle(model.navigationTitle)
+    }
+
+    private var listSelectionBinding: Binding<Set<AssetID>> {
+        Binding(
+            get: { model.selectedAssetIDs },
+            set: { ids in
+                model.selectedAssetIDs = ids
+                model.selectionAnchorID = ids.count == 1 ? ids.first : nil
+                model.keyboardFocusedAssetID = model.selectionAnchorID
+            }
+        )
+    }
+}
+
+private struct AssetMetadataList: View {
+    let records: [AssetGridRecord]
+    @Binding var selectedAssetIDs: Set<AssetID>
+    let sort: AssetSort
+    let setSort: (AssetSort) -> Void
+
+    var body: some View {
+        Table(records, selection: $selectedAssetIDs) {
+            TableColumn("Name") { record in
+                HStack(spacing: 6) {
+                    Image(systemName: record.originalAvailable ? "photo" : "icloud.and.arrow.down")
+                        .foregroundStyle(.secondary)
+                    Text(record.displayName)
+                }
+            }
+            TableColumn("Modified") { record in
+                Text(record.modifiedAt, format: .dateTime.year().month().day().hour().minute())
+            }
+            TableColumn("Dimensions") { record in
+                Text(dimensions(record))
+            }
+            TableColumn("Size") { record in
+                Text(ByteCountFormatter.string(fromByteCount: record.fileSize, countStyle: .file))
+            }
+            TableColumn("Rating") { record in
+                Text(record.rating.rawValue == 0 ? "—" : "\(record.rating.rawValue) ★")
+            }
+        }
+        .contextMenu {
+            Menu("Sort") {
+                Button("Name") { setSort(AssetSort(key: .displayName, direction: sort.direction)) }
+                Button("Modified") { setSort(AssetSort(key: .modifiedAt, direction: sort.direction)) }
+                Button("Size") { setSort(AssetSort(key: .fileSize, direction: sort.direction)) }
+                Button("Rating") { setSort(AssetSort(key: .rating, direction: sort.direction)) }
+            }
+        }
+    }
+
+    private func dimensions(_ record: AssetGridRecord) -> String {
+        guard let width = record.width, let height = record.height else { return "—" }
+        return "\(width) × \(height)"
     }
 }
 

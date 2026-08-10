@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "acceptance:live": "node scripts/phase2-fixture-acceptance.mjs"
+    "acceptance:live": "node scripts/phase2-fixture-acceptance.mjs",
+    "acceptance:phase3-live": "node scripts/phase3-fixture-acceptance.mjs"
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",

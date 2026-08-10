@@ -27,7 +27,7 @@ public enum ManagedAssetBlobStoreError: Error, Equatable, Sendable {
 /// The store owns only the two directories supplied at initialization. Source files are copied into
 /// staging and are never moved, renamed, or removed. Committed blobs use a stable, relative storage
 /// key and can be removed only by the actor instance that committed them, for catalog rollback.
-public actor ManagedAssetBlobStore: AssetBlobStore {
+public actor ManagedAssetBlobStore: RemoteOriginalMaterializing {
     public let originalsDirectoryURL: URL
     public let stagingDirectoryURL: URL
 
@@ -215,6 +215,38 @@ public actor ManagedAssetBlobStore: AssetBlobStore {
         return try resolvedURL(for: storageKey)
     }
 
+    public func materializeRemoteOriginal(
+        from temporaryURL: URL,
+        assetID: AssetID,
+        storageKey: AssetStorageKey
+    ) async throws -> URL {
+        try verifyOwnedDirectories()
+        let expectedFilenamePrefix = "\(assetID.description)."
+        let components = try Self.validatedStorageKeyComponents(storageKey)
+        guard components.filename.hasPrefix(expectedFilenamePrefix) else {
+            throw ManagedAssetBlobStoreError.invalidStorageKey(storageKey.rawValue)
+        }
+        let destination = try resolvedURLForMaterialization(storageKey)
+        if itemExists(at: destination) {
+            try verifyRegularFile(at: destination, missingError: .managedBlobMissing(storageKey))
+            return destination
+        }
+        try verifyRegularFile(at: temporaryURL, missingError: .sourceDoesNotExist(temporaryURL))
+        let stagingURL = stagingDirectoryURL.appendingPathComponent("remote-\(UUID().uuidString.lowercased()).stage", isDirectory: false)
+        guard Self.isDirectChild(stagingURL, of: stagingDirectoryURL) else { throw ManagedAssetBlobStoreError.unrecognizedStagedBlob }
+        do {
+            try fileManager.copyItem(at: temporaryURL, to: stagingURL)
+            try verifyRegularFile(at: stagingURL, missingError: .stagedBlobMissing(stagingURL))
+            let parent = destination.deletingLastPathComponent()
+            try Self.prepareDirectory(parent, using: fileManager)
+            try fileManager.moveItem(at: stagingURL, to: destination)
+            return destination
+        } catch {
+            try? fileManager.removeItem(at: stagingURL)
+            throw error
+        }
+    }
+
     private func resolvedURL(for storageKey: AssetStorageKey) throws -> URL {
         let components = try Self.validatedStorageKeyComponents(storageKey)
         let url = originalsDirectoryURL
@@ -226,6 +258,18 @@ public actor ManagedAssetBlobStore: AssetBlobStore {
             throw ManagedAssetBlobStoreError.invalidStorageKey(storageKey.rawValue)
         }
         try verifyRegularFile(at: url, missingError: .managedBlobMissing(storageKey))
+        return url
+    }
+
+    private func resolvedURLForMaterialization(_ storageKey: AssetStorageKey) throws -> URL {
+        let components = try Self.validatedStorageKeyComponents(storageKey)
+        let url = originalsDirectoryURL
+            .appendingPathComponent(components.shard, isDirectory: true)
+            .appendingPathComponent(components.filename, isDirectory: false)
+            .standardizedFileURL
+        guard Self.isSameOrDescendant(url, of: originalsDirectoryURL) else {
+            throw ManagedAssetBlobStoreError.invalidStorageKey(storageKey.rawValue)
+        }
         return url
     }
 

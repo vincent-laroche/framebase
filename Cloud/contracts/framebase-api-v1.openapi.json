@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Framebase Development API",
-    "version": "1.0.0",
-    "description": "Private fixture-only cloud contract for Framebase Phase 2."
+    "version": "1.2.0",
+    "description": "Private development cloud contract for Framebase Phase 4 organization and recovery."
   },
   "paths": {
     "/v1/health": {
@@ -31,6 +31,16 @@
             "required": true
           }
         ]
+      }
+    },
+    "/v1/auth/enroll/challenge": {
+      "post": {
+        "summary": "Issue a one-time device keypair enrollment challenge"
+      }
+    },
+    "/v1/auth/enroll/complete": {
+      "post": {
+        "summary": "Verify a device keypair enrollment proof"
       }
     },
     "/v1/auth/revoke": {
@@ -83,6 +93,42 @@
             "bearerAuth": []
           }
         ]
+      }
+    },
+    "/v1/blobs/multipart/initiate": {
+      "post": {
+        "summary": "Create or resume a private multipart original upload",
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/v1/blobs/multipart/{uploadId}/parts/{partNumber}": {
+      "put": {
+        "summary": "Upload one bounded authenticated multipart part",
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/v1/blobs/multipart/{uploadId}/complete": {
+      "post": {
+        "summary": "Assemble a complete multipart original privately in R2",
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/v1/blobs/multipart/{uploadId}/confirm": {
+      "post": {
+        "summary": "Accept device checksum verification of a completed multipart original",
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/v1/blobs/{id}/verification-download": {
+      "get": {
+        "summary": "Issue a short-lived verification-only private download",
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/v1/assets/{id}/variants/{variant}": {
+      "get": {
+        "summary": "Return one fixed private cloud derivative variant",
+        "security": [{ "bearerAuth": [] }]
       }
     },
     "/v1/blobs/{id}/download": {
@@ -163,7 +209,11 @@
               "asset",
               "folder",
               "album",
-              "blob"
+              "blob",
+              "tag",
+              "saved_search",
+              "export_receipt",
+              "backup_manifest"
             ]
           },
           "entityId": {
@@ -181,6 +231,59 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "MutationOperation": {
+        "type": "object",
+        "required": [
+          "type",
+          "targetId",
+          "payload"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "create_folder",
+              "rename_folder",
+              "move_folder",
+              "create_asset",
+              "move_asset",
+              "move_assets",
+              "update_rating",
+              "update_favorite",
+              "create_album",
+              "add_assets_to_album",
+              "create_tag",
+              "rename_tag",
+              "delete_tag",
+              "add_tag_to_assets",
+              "remove_tag_from_assets",
+              "create_saved_search",
+              "update_saved_search",
+              "delete_saved_search",
+              "record_export_receipt",
+              "record_backup_manifest",
+              "record_backup_restore_drill",
+              "rename_asset",
+              "trash_asset",
+              "restore_asset",
+              "rename_album",
+              "remove_assets_from_album",
+              "reorder_album",
+              "delete_album"
+            ]
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "payload": {
+            "type": "object"
           }
         }
       }

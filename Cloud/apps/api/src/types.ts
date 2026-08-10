@@ -1,6 +1,7 @@
 export interface Bindings {
   DB: D1Database;
   BLOBS: R2Bucket;
+  IMAGES?: ImagesBinding;
   JWT_SECRET?: string;
   ENROLLMENT_SECRET?: string;
   R2_ACCOUNT_ID?: string;

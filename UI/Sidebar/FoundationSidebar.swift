@@ -15,6 +15,8 @@ struct SidebarAssetDrop: Equatable, Sendable {
 enum SidebarContextAction: Equatable, Sendable {
     case createFolder(parentFolderID: FolderID?)
     case deleteFolder(FolderID)
+    case createAlbum
+    case deleteAlbum(AlbumID)
 }
 
 enum SidebarDropDisposition: Equatable, Sendable {
@@ -32,6 +34,7 @@ struct FoundationSidebar: NSViewRepresentable {
     @Binding var isKeyboardFocused: Bool
     var focusRequestGeneration: Int
     var onRenameFolder: (FolderID, String) -> Void
+    var onRenameAlbum: (AlbumID, String) -> Void
     var onContextAction: (SidebarContextAction) -> Void
     var validateFolderDrop: (SidebarFolderDrop) -> SidebarDropDisposition
     var onReparentFolder: (SidebarFolderDrop) -> Void
@@ -46,6 +49,7 @@ struct FoundationSidebar: NSViewRepresentable {
         isKeyboardFocused: Binding<Bool> = .constant(false),
         focusRequestGeneration: Int = 0,
         onRenameFolder: @escaping (FolderID, String) -> Void = { _, _ in },
+        onRenameAlbum: @escaping (AlbumID, String) -> Void = { _, _ in },
         onContextAction: @escaping (SidebarContextAction) -> Void = { _ in },
         validateFolderDrop: @escaping (SidebarFolderDrop) -> SidebarDropDisposition = { _ in .rejected },
         onReparentFolder: @escaping (SidebarFolderDrop) -> Void = { _ in },
@@ -59,6 +63,7 @@ struct FoundationSidebar: NSViewRepresentable {
         _isKeyboardFocused = isKeyboardFocused
         self.focusRequestGeneration = focusRequestGeneration
         self.onRenameFolder = onRenameFolder
+        self.onRenameAlbum = onRenameAlbum
         self.onContextAction = onContextAction
         self.validateFolderDrop = validateFolderDrop
         self.onReparentFolder = onReparentFolder
@@ -96,10 +101,10 @@ struct FoundationSidebar: NSViewRepresentable {
             coordinator?.reportFocus(isFocused)
         }
         outlineView.onRenameSelected = { [weak coordinator = context.coordinator] in
-            coordinator?.beginRenamingSelectedFolder()
+            coordinator?.beginRenamingSelectedItem()
         }
         outlineView.onDeleteSelected = { [weak coordinator = context.coordinator] in
-            coordinator?.deleteSelectedFolder()
+            coordinator?.deleteSelectedItem()
         }
 
         let scrollView = NSScrollView()
@@ -201,10 +206,10 @@ struct FoundationSidebar: NSViewRepresentable {
             parent.isKeyboardFocused = isFocused
         }
 
-        func beginRenamingSelectedFolder() {
+        func beginRenamingSelectedItem() {
             guard let outlineView,
                   let node = selectedNode(in: outlineView),
-                  case .folder = node.id else { return }
+                  node.isEditable else { return }
 
             let row = outlineView.row(forItem: node)
             guard row >= 0 else { return }
@@ -212,11 +217,14 @@ struct FoundationSidebar: NSViewRepresentable {
             outlineView.editColumn(0, row: row, with: nil, select: true)
         }
 
-        func deleteSelectedFolder() {
+        func deleteSelectedItem() {
             guard let outlineView,
-                  let node = selectedNode(in: outlineView),
-                  case let .folder(folderID) = node.id else { return }
-            parent.onContextAction(.deleteFolder(folderID))
+                  let node = selectedNode(in: outlineView) else { return }
+            switch node.id {
+            case let .folder(folderID): parent.onContextAction(.deleteFolder(folderID))
+            case let .album(albumID): parent.onContextAction(.deleteAlbum(albumID))
+            default: return
+            }
         }
 
         func numberOfChildren(of item: Any?) -> Int {
@@ -254,10 +262,7 @@ struct FoundationSidebar: NSViewRepresentable {
 
         func outlineView(_ outlineView: NSOutlineView, shouldEdit tableColumn: NSTableColumn?, item: Any) -> Bool {
             guard let node = item as? SidebarNode else { return false }
-            if case .folder = node.id {
-                return true
-            }
-            return false
+            return node.isEditable
         }
 
         func outlineView(
@@ -298,13 +303,15 @@ struct FoundationSidebar: NSViewRepresentable {
         func controlTextDidEndEditing(_ notification: Notification) {
             guard let textField = notification.object as? NSTextField,
                   let cell = textField.superview as? SidebarCellView,
-                  let node = cell.node,
-                  case let .folder(folderID) = node.id else { return }
+                  let node = cell.node else { return }
 
             let proposedName = textField.stringValue
             textField.stringValue = node.title
-            if proposedName != node.title {
-                parent.onRenameFolder(folderID, proposedName)
+            guard proposedName != node.title else { return }
+            switch node.id {
+            case let .folder(folderID): parent.onRenameFolder(folderID, proposedName)
+            case let .album(albumID): parent.onRenameAlbum(albumID, proposedName)
+            default: return
             }
         }
 
@@ -398,6 +405,11 @@ struct FoundationSidebar: NSViewRepresentable {
                 menu.addItem(.separator())
                 menu.addItem(menuItem("Rename", action: #selector(renameFolder)))
                 menu.addItem(menuItem("Delete Folder", action: #selector(deleteFolder)))
+            case .group(.albums), .placeholder(.albums):
+                menu.addItem(menuItem("New Album", action: #selector(createAlbum)))
+            case .album:
+                menu.addItem(menuItem("Rename", action: #selector(renameAlbum)))
+                menu.addItem(menuItem("Delete Album", action: #selector(deleteAlbum)))
             default:
                 break
             }
@@ -413,12 +425,25 @@ struct FoundationSidebar: NSViewRepresentable {
         }
 
         @objc private func renameFolder() {
-            beginRenamingSelectedFolder()
+            beginRenamingSelectedItem()
         }
 
         @objc private func deleteFolder() {
             guard case let .folder(folderID) = contextMenuNode?.id else { return }
             parent.onContextAction(.deleteFolder(folderID))
+        }
+
+        @objc private func createAlbum() {
+            parent.onContextAction(.createAlbum)
+        }
+
+        @objc private func renameAlbum() {
+            beginRenamingSelectedItem()
+        }
+
+        @objc private func deleteAlbum() {
+            guard case let .album(albumID) = contextMenuNode?.id else { return }
+            parent.onContextAction(.deleteAlbum(albumID))
         }
 
         private func rebuildNodes(folderTree: FolderTreeSnapshot?, albums: [Album]) {
@@ -429,7 +454,8 @@ struct FoundationSidebar: NSViewRepresentable {
             libraryGroup.children = [
                 destinationNode(.allAssets, title: "All Assets", symbolName: "photo.on.rectangle.angled"),
                 destinationNode(.inbox, title: "Inbox", symbolName: "tray"),
-                destinationNode(.favorites, title: "Favorites", symbolName: "heart")
+                destinationNode(.favorites, title: "Favorites", symbolName: "heart"),
+                destinationNode(.trash, title: "Trash", symbolName: "trash")
             ]
 
             let foldersGroup = SidebarNode(id: .group(.folders), title: "Folders", isGroup: true)
@@ -561,7 +587,7 @@ struct FoundationSidebar: NSViewRepresentable {
             switch target {
             case let .folder(folderID): nodesByID[.folder(folderID)]
             case let .album(albumID): nodesByID[.album(albumID)]
-            case .allAssets, .inbox, .favorites: nodesByID[.destination(target)]
+            case .allAssets, .inbox, .favorites, .trash: nodesByID[.destination(target)]
             }
         }
 
@@ -840,7 +866,10 @@ private final class SidebarNode: NSObject {
     }
 
     var isEditable: Bool {
-        if case .folder = id { true } else { false }
+        switch id {
+        case .folder, .album: true
+        default: false
+        }
     }
 }
 

@@ -16,6 +16,10 @@ public protocol AssetRepository: Sendable {
     func updateRating(_ rating: AssetRating, for assetIDs: Set<AssetID>) async throws
     func updateFavorite(_ favorite: Bool, for assetIDs: Set<AssetID>) async throws
     func moveAssets(_ assetIDs: Set<AssetID>, to folderID: FolderID) async throws
+    func trashAssets(_ assetIDs: Set<AssetID>, retentionDays: Int) async throws -> [AssetTrashReceipt]
+    func restoreAssets(_ assetIDs: Set<AssetID>) async throws
+    func trashedAssets(sortedBy sort: AssetSort) async throws -> AssetPage
+    func trashReceipts(for assetIDs: Set<AssetID>) async throws -> [AssetTrashReceipt]
 }
 
 public protocol FolderRepository: Sendable {
@@ -33,6 +37,38 @@ public protocol AlbumRepository: Sendable {
     func observeAlbums() -> AsyncThrowingStream<[Album], any Error>
     func addAssets(_ assetIDs: Set<AssetID>, to albumID: AlbumID) async throws
     func removeAssets(_ assetIDs: Set<AssetID>, from albumID: AlbumID) async throws
+    func createAlbum(named name: String) async throws -> Album
+    func renameAlbum(_ albumID: AlbumID, to name: String) async throws
+    func reorderAlbum(_ albumID: AlbumID, after predecessorID: AlbumID?) async throws
+    func deleteAlbum(_ albumID: AlbumID) async throws
+}
+
+public protocol TagRepository: Sendable {
+    func tags() async throws -> [Tag]
+    func observeTags() -> AsyncThrowingStream<[Tag], any Error>
+    func createTag(named name: TagName) async throws -> Tag
+    func renameTag(_ tagID: TagID, to name: TagName) async throws
+    func deleteTag(_ tagID: TagID) async throws
+    func tags(for assetIDs: Set<AssetID>) async throws -> [AssetID: [Tag]]
+    func addTags(_ tagIDs: Set<TagID>, to assetIDs: Set<AssetID>) async throws
+    func removeTags(_ tagIDs: Set<TagID>, from assetIDs: Set<AssetID>) async throws
+}
+
+public protocol SavedSearchRepository: Sendable {
+    func savedSearches() async throws -> [SavedSearch]
+    func save(_ savedSearch: SavedSearch) async throws
+    func deleteSavedSearch(_ savedSearchID: SavedSearchID) async throws
+}
+
+public protocol ExportReceiptRepository: Sendable {
+    func record(_ receipt: AssetExportReceipt) async throws
+    func receipts() async throws -> [AssetExportReceipt]
+}
+
+public protocol BackupManifestRepository: Sendable {
+    func record(_ manifest: BackupManifest) async throws
+    func manifests() async throws -> [BackupManifest]
+    func recordRestoreDrill(manifestID: BackupManifestID, result: String, at date: Date) async throws
 }
 
 public struct FolderDeletionReceipt: Sendable {

@@ -4,19 +4,50 @@ public enum AssetScope: Hashable, Sendable {
     case allAssets
     case inbox
     case favorites
+    case trash
     case folder(FolderID)
     case album(AlbumID)
 }
 
-public struct AssetQuery: Hashable, Sendable {
-    public var scope: AssetScope
+public struct AssetFilter: Codable, Hashable, Sendable {
+    public var text: String?
+    public var folderPath: String?
+    public var tagIDs: Set<TagID>
+    public var albumIDs: Set<AlbumID>
+    public var dateRange: ClosedRange<Date>?
+    public var rating: AssetRating?
+    public var favorite: Bool?
 
-    public init(scope: AssetScope) {
-        self.scope = scope
+    public init(
+        text: String? = nil,
+        folderPath: String? = nil,
+        tagIDs: Set<TagID> = [],
+        albumIDs: Set<AlbumID> = [],
+        dateRange: ClosedRange<Date>? = nil,
+        rating: AssetRating? = nil,
+        favorite: Bool? = nil
+    ) {
+        self.text = text?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.folderPath = folderPath?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.tagIDs = tagIDs
+        self.albumIDs = albumIDs
+        self.dateRange = dateRange
+        self.rating = rating
+        self.favorite = favorite
     }
 }
 
-public struct AssetSort: Hashable, Sendable {
+public struct AssetQuery: Hashable, Sendable {
+    public var scope: AssetScope
+    public var filter: AssetFilter
+
+    public init(scope: AssetScope, filter: AssetFilter = .init()) {
+        self.scope = scope
+        self.filter = filter
+    }
+}
+
+public struct AssetSort: Codable, Hashable, Sendable {
     public enum Key: String, Codable, CaseIterable, Sendable {
         case displayName
         case importedAt
@@ -120,6 +151,9 @@ public struct CatalogChange: Sendable {
         case folders
         case albums
         case settings
+        case tags
+        case savedSearches
+        case trash
     }
 
     public let areas: Set<Area>
@@ -135,4 +169,8 @@ public struct CatalogChange: Sendable {
         self.affectedAssetIDs = affectedAssetIDs
         self.affectedFolderIDs = affectedFolderIDs
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

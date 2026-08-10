@@ -50,6 +50,17 @@ public protocol AssetBlobStore: Sendable {
     func recoverStaging() async throws -> StagingRecoveryResult
 }
 
+/// Optional capability of the managed local store. Remote originals can only
+/// re-enter the package through this checked staging boundary; UI code never
+/// writes a downloaded file into `Originals/` directly.
+public protocol RemoteOriginalMaterializing: AssetBlobStore {
+    func materializeRemoteOriginal(
+        from temporaryURL: URL,
+        assetID: AssetID,
+        storageKey: AssetStorageKey
+    ) async throws -> URL
+}
+
 public struct StagingRecoveryResult: Sendable {
     public let recoveredCount: Int
     public let failedURLs: [URL]

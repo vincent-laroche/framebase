@@ -90,6 +90,67 @@ public struct CatalogAlbumRepository: AlbumRepository, Sendable {
         }
     }
 
+    public func createAlbum(named name: String) async throws -> Album {
+        let normalized = try CatalogValidation.normalizedName(name)
+        return try await databasePool.write { db in
+            let now = Date()
+            let album = Album(
+                id: AlbumID(),
+                name: normalized,
+                createdAt: now,
+                updatedAt: now,
+                sortOrder: try CatalogSortOrder.next(in: db, table: "albums", predicateSQL: "1", arguments: [])
+            )
+            try AlbumRecord(album: album).insert(db)
+            return album
+        }
+    }
+
+    public func renameAlbum(_ albumID: AlbumID, to name: String) async throws {
+        let normalized = try CatalogValidation.normalizedName(name)
+        try await databasePool.write { db in
+            guard try Self.albumExists(albumID, in: db) else { throw CatalogError.albumNotFound(albumID) }
+            try db.execute(
+                sql: "UPDATE albums SET name = ?, updated_at_ms = ? WHERE id = ?",
+                arguments: [normalized, CatalogDate.milliseconds(Date()), albumID.description]
+            )
+        }
+    }
+
+    public func reorderAlbum(_ albumID: AlbumID, after predecessorID: AlbumID?) async throws {
+        try await databasePool.write { db in
+            guard try Self.albumExists(albumID, in: db) else { throw CatalogError.albumNotFound(albumID) }
+            if let predecessorID {
+                guard predecessorID != albumID, try Self.albumExists(predecessorID, in: db) else {
+                    throw CatalogError.albumNotFound(predecessorID)
+                }
+            }
+            var ids = try String.fetchAll(db, sql: "SELECT id FROM albums ORDER BY sort_order, name COLLATE NOCASE, id")
+            ids.removeAll { $0 == albumID.description }
+            let insertionIndex: Int
+            if let predecessorID, let predecessorIndex = ids.firstIndex(of: predecessorID.description) {
+                insertionIndex = predecessorIndex + 1
+            } else {
+                insertionIndex = 0
+            }
+            ids.insert(albumID.description, at: insertionIndex)
+            let now = CatalogDate.milliseconds(Date())
+            for (index, id) in ids.enumerated() {
+                try db.execute(
+                    sql: "UPDATE albums SET sort_order = ?, updated_at_ms = ? WHERE id = ?",
+                    arguments: [Int64(index + 1) * CatalogSortOrder.gap, now, id]
+                )
+            }
+        }
+    }
+
+    public func deleteAlbum(_ albumID: AlbumID) async throws {
+        try await databasePool.write { db in
+            try db.execute(sql: "DELETE FROM albums WHERE id = ?", arguments: [albumID.description])
+            guard db.changesCount > 0 else { throw CatalogError.albumNotFound(albumID) }
+        }
+    }
+
     private static func albumExists(_ albumID: AlbumID, in db: Database) throws -> Bool {
         try Bool.fetchOne(
             db,

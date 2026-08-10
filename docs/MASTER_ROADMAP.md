@@ -587,7 +587,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 3 — Cloud-backed library, image delivery, and offline sync
 
-**Status:** Planned.
+**Status:** In progress. Authority: `docs/phases/PHASE_3_CLOUD_BACKED_LIBRARY.md`.
 
 **User-visible outcome:** The Mac app can opt a library into cloud backing, upload originals safely, stay responsive from local SQLite, work offline, and display cloud-derived thumbnails/previews.
 
@@ -629,7 +629,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 4 — Complete organization, search, trash, and recovery
 
-**Status:** Planned.
+**Status:** Active implementation plan — see `docs/phases/PHASE_4_COMPLETE_ORGANIZATION.md`.
 
 **User-visible outcome:** Framebase becomes a complete manual asset manager before intelligence is added.
 

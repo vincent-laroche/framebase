@@ -25,6 +25,7 @@ const PROTECTED_REQUESTS: Array<[string, RequestInit]> = [
     }
   ],
   ['/v1/blobs/nonexistent/download', { method: 'GET' }],
+  ['/v1/assets/nonexistent/variants/grid-256', { method: 'GET' }],
   [
     '/v1/auth/enroll',
     {

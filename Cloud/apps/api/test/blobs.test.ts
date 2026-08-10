@@ -113,6 +113,52 @@ describe('blob upload verification', () => {
     expect(await env.BLOBS.head(row!.r2_key)).toBeNull();
   });
 
+  it('resumes multipart parts, requires a local remote-byte verification, then releases the original', async () => {
+    const token = await enrollDevice(env, 'device-multipart', ['assets.import', 'originals.download']);
+    const partSize = 8 * 1024 * 1024;
+    const bytes = new Uint8Array(partSize * 3 + 17);
+    bytes.fill(7);
+    const digest = await sha256(bytes);
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const initiated = await app.request('/v1/blobs/multipart/initiate', {
+      method: 'POST', headers,
+      body: JSON.stringify({ sha256: digest, byteSize: bytes.byteLength, mediaType: 'image/jpeg', originalExtension: 'jpg' })
+    }, env);
+    expect(initiated.status).toBe(200);
+    const manifest = await initiated.json<{ uploadId: string; partByteSize: number; partCount: number }>();
+    expect(manifest.partByteSize).toBe(partSize);
+    expect(manifest.partCount).toBe(4);
+
+    const resumed = await app.request('/v1/blobs/multipart/initiate', {
+      method: 'POST', headers,
+      body: JSON.stringify({ sha256: digest, byteSize: bytes.byteLength, mediaType: 'image/jpeg', originalExtension: 'jpg' })
+    }, env);
+    expect((await resumed.json<{ uploadId: string }>()).uploadId).toBe(manifest.uploadId);
+
+    for (let partNumber = 1; partNumber <= manifest.partCount; partNumber += 1) {
+      const offset = (partNumber - 1) * partSize;
+      const end = Math.min(offset + partSize, bytes.byteLength);
+      const uploaded = await app.request(`/v1/blobs/multipart/${manifest.uploadId}/parts/${partNumber}`, {
+        method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: bytes.slice(offset, end)
+      }, env);
+      expect(uploaded.status).toBe(200);
+    }
+
+    const completed = await app.request(`/v1/blobs/multipart/${manifest.uploadId}/complete`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }, env);
+    expect(completed.status).toBe(200);
+    expect((await completed.json<{ status: string }>()).status).toBe('awaiting_client_verification');
+    expect((await app.request(`/v1/blobs/${digest}/download`, { headers: { Authorization: `Bearer ${token}` } }, env)).status).toBe(404);
+    expect((await app.request(`/v1/blobs/${digest}/verification-download`, { headers: { Authorization: `Bearer ${token}` } }, env)).status).toBe(200);
+
+    const confirmed = await app.request(`/v1/blobs/multipart/${manifest.uploadId}/confirm`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ sha256: digest, byteSize: bytes.byteLength })
+    }, env);
+    expect(confirmed.status).toBe(200);
+    expect((await app.request(`/v1/blobs/${digest}/download`, { headers: { Authorization: `Bearer ${token}` } }, env)).status).toBe(200);
+  });
+
   it('rejects an object whose stored content type differs from its signed intent', async () => {
     const token = await enrollDevice(env, 'device-blobs-4', ['assets.import']);
     const bytes = new TextEncoder().encode('content-type-fixture');

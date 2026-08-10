@@ -207,6 +207,57 @@ final class FramebaseUITests: XCTestCase {
         attachScreenshot(named: "ImportedCellRendered", in: app)
     }
 
+    @MainActor
+    func testManualOrganizationAlbumAndTagControls() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-\(UUID().uuidString).framebase", isDirectory: true)
+        let sourceDirectoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FramebaseUITests-Sources-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectoryURL, withIntermediateDirectories: true)
+        let sourceURL = try writeJPEG(named: "organization-sample.jpg", in: sourceDirectoryURL)
+        let app = XCUIApplication()
+        app.launchEnvironment["FRAMEBASE_UI_TEST_LIBRARY_ROOT"] = rootURL.path
+        app.launchEnvironment["FRAMEBASE_UI_TEST_IMPORT_SOURCES"] = sourceURL.path
+        app.launch()
+        defer {
+            app.terminate()
+            try? FileManager.default.removeItem(at: rootURL)
+            try? FileManager.default.removeItem(at: sourceDirectoryURL)
+        }
+
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        let cell = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "asset.")
+        ).element(boundBy: 0)
+        XCTAssertTrue(cell.waitForExistence(timeout: 30))
+        cell.click()
+        XCTAssertTrue(app.staticTexts["File"].waitForExistence(timeout: 10))
+
+        let albumsMenu = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier == %@", "toolbar.albums")
+        ).firstMatch
+        XCTAssertTrue(albumsMenu.waitForExistence(timeout: 10))
+        albumsMenu.click()
+        let newAlbum = app.menuItems["New Album"]
+        XCTAssertTrue(newAlbum.waitForExistence(timeout: 5))
+        newAlbum.click()
+        XCTAssertTrue(sidebarItem(named: "New Album", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(cell.waitForExistence(timeout: 10))
+        cell.click()
+        XCTAssertTrue(app.staticTexts["File"].waitForExistence(timeout: 10))
+
+        let tagField = app.textFields["inspector.tagName"]
+        XCTAssertTrue(tagField.waitForExistence(timeout: 10))
+        tagField.click()
+        tagField.typeText("status:review")
+        let addTagButton = app.buttons["inspector.addTag"]
+        XCTAssertTrue(addTagButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(addTagButton.isEnabled)
+        addTagButton.click()
+        XCTAssertTrue(waitForEmptyValue(of: tagField, timeout: 10))
+    }
+
     /// Scaled fixture test (300+ assets) that verifies:
     /// 1) Grid thumbnail rendering under scale with real/synthetic images.
     /// 2) Command-A selects all assets and updates inspector to "Selection".
@@ -349,6 +400,17 @@ final class FramebaseUITests: XCTestCase {
     @MainActor
     private func sidebarItem(named name: String, in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any)["sidebar.item.\(name)"]
+    }
+
+    @MainActor
+    private func waitForEmptyValue(of element: XCUIElement, timeout: TimeInterval) -> Bool {
+        wait(for: NSPredicate(format: "value == %@", ""), on: element, timeout: timeout)
+    }
+
+    @MainActor
+    private func wait(for predicate: NSPredicate, on element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     @MainActor

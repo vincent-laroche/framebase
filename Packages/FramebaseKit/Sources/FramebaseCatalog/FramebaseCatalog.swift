@@ -5,6 +5,13 @@ import GRDB
 public enum FramebaseCatalogFoundation {
     public static let initialSchemaVersion = 1
     public static let migrationIdentifier = "v1_initial_catalog"
+    public static let cloudMigrationIdentifier = "v2_cloud_sync_spine"
+    public static let remoteEntityMigrationIdentifier = "v3_remote_entity_revisions"
+    public static let organizationMigrationIdentifier = "v4_complete_organization"
+    public static let organizationCloudParityMigrationIdentifier = "v5_organization_cloud_parity"
+    public static let receiptCloudParityMigrationIdentifier = "v6_receipt_cloud_parity"
+    public static let backupCloudParityMigrationIdentifier = "v7_backup_cloud_parity"
+    public static let currentSchemaVersion = 7
 
     public static func configure(_ configuration: inout Configuration) {
         configuration.foreignKeysEnabled = true
@@ -26,6 +33,8 @@ public enum CatalogError: Error, Equatable, Sendable {
     case invalidFolderParent(FolderID)
     case folderCycle
     case incompleteRestore
+    case tagNotFound(TagID)
+    case savedSearchNotFound(SavedSearchID)
 }
 
 /// The persistence boundary for one Framebase catalog.
@@ -40,6 +49,11 @@ public final class CatalogDatabase: Sendable {
     public let assets: CatalogAssetRepository
     public let folders: CatalogFolderRepository
     public let albums: CatalogAlbumRepository
+    public let tags: CatalogTagRepository
+    public let savedSearches: CatalogSavedSearchRepository
+    public let exports: CatalogExportReceiptRepository
+    public let backups: CatalogBackupManifestRepository
+    public let cloud: CatalogCloudRepository
 
     let databasePool: DatabasePool
 
@@ -76,6 +90,11 @@ public final class CatalogDatabase: Sendable {
         self.assets = CatalogAssetRepository(databasePool: pool)
         self.folders = CatalogFolderRepository(databasePool: pool, inboxID: identity.1)
         self.albums = CatalogAlbumRepository(databasePool: pool)
+        self.tags = CatalogTagRepository(databasePool: pool)
+        self.savedSearches = CatalogSavedSearchRepository(databasePool: pool)
+        self.exports = CatalogExportReceiptRepository(databasePool: pool)
+        self.backups = CatalogBackupManifestRepository(databasePool: pool)
+        self.cloud = CatalogCloudRepository(databasePool: pool)
     }
 
     /// Inserts an already committed managed original into the catalog.
@@ -130,6 +149,129 @@ public final class CatalogDatabase: Sendable {
         }
     }
 
+    /// Applies only the starter template's explicitly initial logical folders
+    /// and controlled tag values. It never moves assets, changes original
+    /// storage, or creates the intentionally on-first-use folders.
+    public func previewHairSolutionsLibraryTemplate() async throws -> LibraryTemplateApplicationPreview {
+        try await databasePool.read { db in
+            var foldersByPath: [String: FolderID] = [:]
+            var folderPathsToCreate: [String] = []
+            for definition in HairSolutionsLibraryTemplate.initialFolders {
+                guard let name = definition.path.last else { continue }
+                let path = definition.path.joined(separator: "/")
+                let parentPath = definition.path.dropLast().joined(separator: "/")
+                let parentID = parentPath.isEmpty ? nil : foldersByPath[parentPath]
+                let existingID: String?
+                if let parentID {
+                    existingID = try String.fetchOne(
+                        db,
+                        sql: "SELECT id FROM folders WHERE parent_folder_id = ? AND name = ? COLLATE NOCASE",
+                        arguments: [parentID.description, name]
+                    )
+                } else {
+                    existingID = try String.fetchOne(
+                        db,
+                        sql: "SELECT id FROM folders WHERE parent_folder_id IS NULL AND name = ? COLLATE NOCASE",
+                        arguments: [name]
+                    )
+                }
+                if let existingID, let uuid = UUID(uuidString: existingID) {
+                    foldersByPath[path] = FolderID(rawValue: uuid)
+                } else {
+                    folderPathsToCreate.append(path)
+                }
+            }
+
+            let controlledTagNames = try HairSolutionsLibraryTemplate.tagNamespaces
+                .flatMap { namespace in
+                    try namespace.allowedValues.map { try TagName(namespace: namespace.namespace, value: $0) }
+                }
+            let tagNamesToCreate = try controlledTagNames.filter { name in
+                !(try Bool.fetchOne(
+                    db,
+                    sql: "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE)",
+                    arguments: [name.rawValue]
+                ) ?? false)
+            }
+
+            return LibraryTemplateApplicationPreview(
+                folderPathsToCreate: folderPathsToCreate,
+                tagNamesToCreate: tagNamesToCreate,
+                onFirstUseFolderPaths: HairSolutionsLibraryTemplate.folders
+                    .filter { $0.provisioning == .onFirstUse }
+                    .map { $0.path.joined(separator: "/") }
+            )
+        }
+    }
+
+    public func applyHairSolutionsLibraryTemplate() async throws -> LibraryTemplateApplicationReceipt {
+        try await databasePool.write { db in
+            let now = Date()
+            let milliseconds = CatalogDate.milliseconds(now)
+            var foldersByPath: [String: FolderID] = [:]
+            var createdFolderIDs: [FolderID] = []
+            for definition in HairSolutionsLibraryTemplate.initialFolders {
+                guard let name = definition.path.last else { continue }
+                let parentPath = definition.path.dropLast().joined(separator: "/")
+                let parentID = parentPath.isEmpty ? nil : foldersByPath[parentPath]
+                if !parentPath.isEmpty, parentID == nil {
+                    throw CatalogError.invalidPersistedValue("template_parent_path")
+                }
+                let existingID: String?
+                if let parentID {
+                    existingID = try String.fetchOne(
+                        db,
+                        sql: "SELECT id FROM folders WHERE parent_folder_id = ? AND name = ? COLLATE NOCASE",
+                        arguments: [parentID.description, name]
+                    )
+                } else {
+                    existingID = try String.fetchOne(
+                        db,
+                        sql: "SELECT id FROM folders WHERE parent_folder_id IS NULL AND name = ? COLLATE NOCASE",
+                        arguments: [name]
+                    )
+                }
+                if let existingID, let uuid = UUID(uuidString: existingID) {
+                    foldersByPath[definition.path.joined(separator: "/")] = FolderID(rawValue: uuid)
+                    continue
+                }
+                let predicate = parentID == nil ? "parent_folder_id IS NULL" : "parent_folder_id = ?"
+                let arguments: StatementArguments = parentID == nil ? [] : [parentID!.description]
+                let folder = Folder(
+                    id: FolderID(),
+                    name: try FolderName(name),
+                    parentFolderID: parentID,
+                    createdAt: now,
+                    updatedAt: now,
+                    sortOrder: try CatalogSortOrder.next(in: db, table: "folders", predicateSQL: predicate, arguments: arguments)
+                )
+                try FolderRecord(folder: folder).insert(db)
+                foldersByPath[definition.path.joined(separator: "/")] = folder.id
+                createdFolderIDs.append(folder.id)
+            }
+
+            var createdTagIDs: [TagID] = []
+            for namespace in HairSolutionsLibraryTemplate.tagNamespaces where !namespace.allowedValues.isEmpty {
+                for value in namespace.allowedValues {
+                    let name = try TagName(namespace: namespace.namespace, value: value)
+                    let exists = try Bool.fetchOne(
+                        db,
+                        sql: "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE)",
+                        arguments: [name.rawValue]
+                    ) ?? false
+                    guard !exists else { continue }
+                    let tag = Tag(name: name, createdAt: now, updatedAt: now)
+                    try db.execute(
+                        sql: "INSERT INTO tags (id, namespace, value, name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?)",
+                        arguments: [tag.id.description, name.namespace, name.value, name.rawValue, milliseconds, milliseconds]
+                    )
+                    createdTagIDs.append(tag.id)
+                }
+            }
+            return LibraryTemplateApplicationReceipt(createdFolderIDs: createdFolderIDs, createdTagIDs: createdTagIDs)
+        }
+    }
+
     static func makeMigrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration(FramebaseCatalogFoundation.migrationIdentifier) { db in
@@ -154,7 +296,398 @@ public final class CatalogDatabase: Sendable {
                 arguments: [catalogID, now, now]
             )
         }
+        migrator.registerMigration(FramebaseCatalogFoundation.cloudMigrationIdentifier) { db in
+            try db.execute(sql: Self.cloudSchemaSQL)
+            try db.execute(
+                sql: "UPDATE catalog_settings SET value = '2', updated_at_ms = ? WHERE key = 'schema_version'",
+                arguments: [CatalogDate.milliseconds(Date())]
+            )
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.remoteEntityMigrationIdentifier) { db in
+            try db.execute(sql: """
+                CREATE TABLE remote_entity_state (
+                    entity_type TEXT NOT NULL CHECK(entity_type IN ('folder', 'album')),
+                    entity_id TEXT NOT NULL CHECK(entity_id = lower(entity_id) AND length(entity_id) = 36),
+                    remote_revision INTEGER NOT NULL CHECK(remote_revision >= 0),
+                    updated_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(entity_type, entity_id)
+                );
+                CREATE INDEX remote_entity_state_revision_index
+                    ON remote_entity_state(entity_type, remote_revision);
+                """)
+            try db.execute(
+                sql: "UPDATE catalog_settings SET value = '3', updated_at_ms = ? WHERE key = 'schema_version'",
+                arguments: [CatalogDate.milliseconds(Date())]
+            )
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.organizationMigrationIdentifier) { db in
+            try Self.applyOrganizationSchemaMigration(in: db)
+            try db.execute(
+                sql: "UPDATE catalog_settings SET value = '4', updated_at_ms = ? WHERE key = 'schema_version'",
+                arguments: [CatalogDate.milliseconds(Date())]
+            )
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.organizationCloudParityMigrationIdentifier) { db in
+            try db.execute(sql: """
+                ALTER TABLE remote_entity_state RENAME TO remote_entity_state_v3;
+                DROP INDEX remote_entity_state_revision_index;
+                CREATE TABLE remote_entity_state (
+                    entity_type TEXT NOT NULL CHECK(entity_type IN ('folder', 'album', 'tag', 'saved_search')),
+                    entity_id TEXT NOT NULL CHECK(entity_id = lower(entity_id) AND length(entity_id) = 36),
+                    remote_revision INTEGER NOT NULL CHECK(remote_revision >= 0),
+                    updated_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(entity_type, entity_id)
+                );
+                INSERT INTO remote_entity_state (entity_type, entity_id, remote_revision, updated_at_ms)
+                SELECT entity_type, entity_id, remote_revision, updated_at_ms FROM remote_entity_state_v3;
+                DROP TABLE remote_entity_state_v3;
+                CREATE INDEX remote_entity_state_revision_index
+                    ON remote_entity_state(entity_type, remote_revision);
+                """)
+            try db.execute(
+                sql: "UPDATE catalog_settings SET value = '5', updated_at_ms = ? WHERE key = 'schema_version'",
+                arguments: [CatalogDate.milliseconds(Date())]
+            )
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.receiptCloudParityMigrationIdentifier) { db in
+            try db.execute(sql: """
+                ALTER TABLE remote_entity_state RENAME TO remote_entity_state_v5;
+                DROP INDEX remote_entity_state_revision_index;
+                CREATE TABLE remote_entity_state (
+                    entity_type TEXT NOT NULL CHECK(entity_type IN ('folder', 'album', 'tag', 'saved_search', 'export_receipt')),
+                    entity_id TEXT NOT NULL CHECK(entity_id = lower(entity_id) AND length(entity_id) = 36),
+                    remote_revision INTEGER NOT NULL CHECK(remote_revision >= 0),
+                    updated_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(entity_type, entity_id)
+                );
+                INSERT INTO remote_entity_state (entity_type, entity_id, remote_revision, updated_at_ms)
+                SELECT entity_type, entity_id, remote_revision, updated_at_ms FROM remote_entity_state_v5;
+                DROP TABLE remote_entity_state_v5;
+                CREATE INDEX remote_entity_state_revision_index
+                    ON remote_entity_state(entity_type, remote_revision);
+                """)
+            try db.execute(
+                sql: "UPDATE catalog_settings SET value = '6', updated_at_ms = ? WHERE key = 'schema_version'",
+                arguments: [CatalogDate.milliseconds(Date())]
+            )
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.backupCloudParityMigrationIdentifier) { db in
+            try db.execute(sql: """
+                ALTER TABLE remote_entity_state RENAME TO remote_entity_state_v6;
+                DROP INDEX remote_entity_state_revision_index;
+                CREATE TABLE remote_entity_state (
+                    entity_type TEXT NOT NULL CHECK(entity_type IN ('folder', 'album', 'tag', 'saved_search', 'export_receipt', 'backup_manifest')),
+                    entity_id TEXT NOT NULL CHECK(entity_id = lower(entity_id) AND length(entity_id) = 36),
+                    remote_revision INTEGER NOT NULL CHECK(remote_revision >= 0),
+                    updated_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(entity_type, entity_id)
+                );
+                INSERT INTO remote_entity_state (entity_type, entity_id, remote_revision, updated_at_ms)
+                SELECT entity_type, entity_id, remote_revision, updated_at_ms FROM remote_entity_state_v6;
+                DROP TABLE remote_entity_state_v6;
+                CREATE INDEX remote_entity_state_revision_index
+                    ON remote_entity_state(entity_type, remote_revision);
+                """)
+            try db.execute(
+                sql: "UPDATE catalog_settings SET value = '7', updated_at_ms = ? WHERE key = 'schema_version'",
+                arguments: [CatalogDate.milliseconds(Date())]
+            )
+        }
         return migrator
+    }
+
+    /// A short-lived compatibility bridge for catalogs created by the
+    /// pre-cloud organization prototype. Those catalogs recorded their own
+    /// `v3_tags`, `v5_saved_searches`, and `v6_local_trash` migrations, but
+    /// their tables do not have the Phase 4 shape. Recreating the Phase 4
+    /// tables blindly caused launch to fail before GRDB could record v4.
+    private static func applyOrganizationSchemaMigration(in db: Database) throws {
+        if try tableExists("tags", in: db) {
+            try migrateLegacyTags(in: db)
+        } else {
+            try db.execute(sql: Self.tagSchemaSQL)
+            try db.execute(sql: Self.tagIndexSQL)
+        }
+
+        if try tableExists("saved_searches", in: db) {
+            try migrateLegacySavedSearches(in: db)
+        } else {
+            try db.execute(sql: Self.savedSearchSchemaSQL)
+            try db.execute(sql: Self.savedSearchIndexSQL)
+        }
+
+        if try tableExists("asset_trash", in: db) {
+            try migrateLegacyTrash(in: db)
+        } else {
+            try db.execute(sql: Self.trashSchemaSQL)
+            try db.execute(sql: Self.trashIndexSQL)
+        }
+
+        try db.execute(sql: Self.receiptSchemaSQL)
+    }
+
+    private static func migrateLegacyTags(in db: Database) throws {
+        let columns = try tableColumns("tags", in: db)
+        let expected = Set(["id", "namespace", "value", "name", "created_at_ms", "updated_at_ms"])
+        guard !expected.isSubset(of: columns) else { return }
+        guard try tableExists("asset_tags", in: db) else {
+            throw CatalogError.invalidPersistedValue("legacy_tag_schema")
+        }
+
+        let legacyTags = try Row.fetchAll(
+            db,
+            sql: "SELECT id, name, created_at_ms, updated_at_ms FROM tags ORDER BY sort_order, id"
+        )
+        let legacyMemberships = try Row.fetchAll(
+            db,
+            sql: "SELECT asset_id, tag_id, added_at_ms FROM asset_tags ORDER BY asset_id, tag_id"
+        )
+
+        try db.execute(sql: Self.legacyTagSchemaSQL)
+        var allocatedNames = Set<String>()
+        for row in legacyTags {
+            let id: String = row["id"]
+            let originalName: String = row["name"]
+            let name = try migratedTagName(originalName, id: id, allocatedNames: &allocatedNames)
+            try db.execute(
+                sql: """
+                    INSERT INTO tags_v4
+                        (id, namespace, value, name, legacy_original_name, created_at_ms, updated_at_ms)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    id,
+                    name.namespace,
+                    name.value,
+                    name.rawValue,
+                    originalName,
+                    row["created_at_ms"] as Int64,
+                    row["updated_at_ms"] as Int64
+                ]
+            )
+        }
+        for row in legacyMemberships {
+            try db.execute(
+                sql: "INSERT INTO asset_tags_v4 (asset_id, tag_id, added_at_ms) VALUES (?, ?, ?)",
+                arguments: [row["asset_id"] as String, row["tag_id"] as String, row["added_at_ms"] as Int64]
+            )
+        }
+
+        try db.execute(sql: "DROP TABLE asset_tags")
+        try db.execute(sql: "DROP TABLE tags")
+        try db.execute(sql: "ALTER TABLE tags_v4 RENAME TO tags")
+        try db.execute(sql: """
+            CREATE TABLE asset_tags (
+                asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                added_at_ms INTEGER NOT NULL,
+                PRIMARY KEY(asset_id, tag_id)
+            );
+            INSERT INTO asset_tags (asset_id, tag_id, added_at_ms)
+            SELECT asset_id, tag_id, added_at_ms FROM asset_tags_v4;
+            DROP TABLE asset_tags_v4;
+            """)
+        try db.execute(sql: Self.tagIndexSQL)
+    }
+
+    private static func migrateLegacySavedSearches(in db: Database) throws {
+        let columns = try tableColumns("saved_searches", in: db)
+        let expected = Set(["id", "name", "filter_json", "sort_json", "created_at_ms", "updated_at_ms"])
+        guard !expected.isSubset(of: columns) else { return }
+        guard Set(["id", "name", "query_json", "created_at_ms", "updated_at_ms", "sort_order"]).isSubset(of: columns) else {
+            throw CatalogError.invalidPersistedValue("legacy_saved_search_schema")
+        }
+
+        let legacySearches = try Row.fetchAll(
+            db,
+            sql: "SELECT id, name, query_json, created_at_ms, updated_at_ms FROM saved_searches ORDER BY sort_order, id"
+        )
+        try db.execute(sql: Self.legacySavedSearchSchemaSQL)
+        let encoder = JSONEncoder()
+        let defaultSortJSON = try jsonString(encoder.encode(AssetSort.defaultSort))
+        for row in legacySearches {
+            let name: String = row["name"]
+            let queryJSON: String = row["query_json"]
+            let filter = legacyFilter(from: queryJSON) ?? AssetFilter()
+            let filterJSON = try jsonString(encoder.encode(filter))
+            let normalizedName = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+            guard !normalizedName.isEmpty else {
+                throw CatalogError.invalidPersistedValue("legacy_saved_search_name")
+            }
+            try db.execute(
+                sql: """
+                    INSERT INTO saved_searches_v4
+                        (id, name, filter_json, sort_json, legacy_query_json, created_at_ms, updated_at_ms)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    row["id"] as String,
+                    normalizedName,
+                    filterJSON,
+                    defaultSortJSON,
+                    queryJSON,
+                    row["created_at_ms"] as Int64,
+                    row["updated_at_ms"] as Int64
+                ]
+            )
+        }
+        try db.execute(sql: "DROP TABLE saved_searches")
+        try db.execute(sql: "ALTER TABLE saved_searches_v4 RENAME TO saved_searches")
+        try db.execute(sql: Self.savedSearchIndexSQL)
+    }
+
+    private static func migrateLegacyTrash(in db: Database) throws {
+        let columns = try tableColumns("asset_trash", in: db)
+        let expected = Set(["asset_id", "prior_folder_id", "prior_album_ids_json", "prior_tag_ids_json", "trashed_at_ms", "scheduled_purge_at_ms"])
+        guard !expected.isSubset(of: columns) else { return }
+        guard Set(["asset_id", "prior_folder_id", "trashed_at_ms", "expires_at_ms"]).isSubset(of: columns) else {
+            throw CatalogError.invalidPersistedValue("legacy_trash_schema")
+        }
+
+        let legacyReceipts = try Row.fetchAll(
+            db,
+            sql: "SELECT asset_id, prior_folder_id, trashed_at_ms, expires_at_ms FROM asset_trash ORDER BY asset_id"
+        )
+        var membershipsByAsset: [String: (albums: String, tags: String)] = [:]
+        for row in legacyReceipts {
+            let assetID: String = row["asset_id"]
+            let albums = try String.fetchAll(
+                db,
+                sql: "SELECT album_id FROM album_assets WHERE asset_id = ? ORDER BY album_id",
+                arguments: [assetID]
+            )
+            let tags = try String.fetchAll(
+                db,
+                sql: "SELECT tag_id FROM asset_tags WHERE asset_id = ? ORDER BY tag_id",
+                arguments: [assetID]
+            )
+            membershipsByAsset[assetID] = (try jsonString(JSONEncoder().encode(albums)), try jsonString(JSONEncoder().encode(tags)))
+        }
+
+        try db.execute(sql: Self.legacyTrashSchemaSQL)
+        for row in legacyReceipts {
+            let assetID: String = row["asset_id"]
+            guard let memberships = membershipsByAsset[assetID] else {
+                throw CatalogError.invalidPersistedValue("legacy_trash_membership")
+            }
+            try db.execute(
+                sql: """
+                    INSERT INTO asset_trash_v4
+                        (asset_id, prior_folder_id, prior_album_ids_json, prior_tag_ids_json, trashed_at_ms, scheduled_purge_at_ms)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    assetID,
+                    row["prior_folder_id"] as String,
+                    memberships.albums,
+                    memberships.tags,
+                    row["trashed_at_ms"] as Int64,
+                    row["expires_at_ms"] as Int64
+                ]
+            )
+        }
+        try db.execute(sql: "DROP TABLE asset_trash")
+        try db.execute(sql: "ALTER TABLE asset_trash_v4 RENAME TO asset_trash")
+        try db.execute(sql: Self.trashIndexSQL)
+        for row in legacyReceipts {
+            let assetID: String = row["asset_id"]
+            try db.execute(sql: "DELETE FROM album_assets WHERE asset_id = ?", arguments: [assetID])
+            try db.execute(sql: "DELETE FROM asset_tags WHERE asset_id = ?", arguments: [assetID])
+        }
+    }
+
+    private static func tableExists(_ table: String, in db: Database) throws -> Bool {
+        try Bool.fetchOne(
+            db,
+            sql: "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)",
+            arguments: [table]
+        ) ?? false
+    }
+
+    private static func tableColumns(_ table: String, in db: Database) throws -> Set<String> {
+        let allowed = Set(["tags", "saved_searches", "asset_trash"])
+        guard allowed.contains(table) else { throw CatalogError.invalidPersistedValue("table_name") }
+        return Set(try Row.fetchAll(db, sql: "PRAGMA table_info(\(table))").map { ($0["name"] as String) })
+    }
+
+    private static func migratedTagName(_ originalName: String, id: String, allocatedNames: inout Set<String>) throws -> TagName {
+        if let name = try? TagName(originalName), allocatedNames.insert(name.rawValue).inserted {
+            return name
+        }
+
+        let folded = originalName.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        let characters = folded.unicodeScalars.map { scalar -> Character in
+            switch scalar.value {
+            case 48...57, 97...122: return Character(String(scalar))
+            default: return "-"
+            }
+        }
+        let slug = String(characters).split(separator: "-", omittingEmptySubsequences: true).joined(separator: "-")
+        let base = String((slug.isEmpty ? "tag" : slug).prefix(54))
+        let suffix = id.replacingOccurrences(of: "-", with: "").prefix(8)
+        var value = base
+        while true {
+            let candidate = try TagName(namespace: "legacy", value: value)
+            if allocatedNames.insert(candidate.rawValue).inserted { return candidate }
+            value = String("\(base.prefix(55))\(base.isEmpty ? "" : "-")\(suffix)".prefix(64))
+        }
+    }
+
+    private static func jsonString(_ data: Data) throws -> String {
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw CatalogError.invalidPersistedValue("json_encoding")
+        }
+        return value
+    }
+
+    private static func legacyFilter(from json: String) -> AssetFilter? {
+        guard let data = json.data(using: .utf8),
+              let query = try? JSONDecoder().decode(LegacySavedSearchQuery.self, from: data),
+              let criteria = query.criteria else { return nil }
+        let dateRange = criteria.capturedDateRange.map { min($0.start, $0.end)...max($0.start, $0.end) }
+        return AssetFilter(
+            text: criteria.text,
+            folderPath: criteria.folderPathText,
+            tagIDs: criteria.tagIDs,
+            albumIDs: criteria.albumIDs,
+            dateRange: dateRange,
+            rating: criteria.rating,
+            favorite: criteria.favorite
+        )
+    }
+
+    private struct LegacySavedSearchQuery: Decodable {
+        let criteria: LegacySavedSearchCriteria?
+    }
+
+    private struct LegacySavedSearchCriteria: Decodable {
+        let text: String?
+        let folderPathText: String?
+        let capturedDateRange: LegacyCapturedDateRange?
+        let rating: AssetRating?
+        let favorite: Bool?
+        let tagIDs: Set<TagID>
+        let albumIDs: Set<AlbumID>
+
+        enum CodingKeys: String, CodingKey {
+            case text, folderPathText, capturedDateRange, rating, favorite, tagIDs, albumIDs
+        }
+
+        init(from decoder: any Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            text = try values.decodeIfPresent(String.self, forKey: .text)
+            folderPathText = try values.decodeIfPresent(String.self, forKey: .folderPathText)
+            capturedDateRange = try values.decodeIfPresent(LegacyCapturedDateRange.self, forKey: .capturedDateRange)
+            rating = try values.decodeIfPresent(AssetRating.self, forKey: .rating)
+            favorite = try values.decodeIfPresent(Bool.self, forKey: .favorite)
+            tagIDs = try values.decodeIfPresent(Set<TagID>.self, forKey: .tagIDs) ?? []
+            albumIDs = try values.decodeIfPresent(Set<AlbumID>.self, forKey: .albumIDs) ?? []
+        }
+    }
+
+    private struct LegacyCapturedDateRange: Decodable {
+        let start: Date
+        let end: Date
     }
 
     private static let initialSchemaSQL = """
@@ -254,6 +787,214 @@ public final class CatalogDatabase: Sendable {
             key TEXT PRIMARY KEY NOT NULL,
             value TEXT NOT NULL,
             updated_at_ms INTEGER NOT NULL
+        );
+        """
+
+    private static let cloudSchemaSQL = """
+        CREATE TABLE cloud_blobs (
+            sha256 TEXT PRIMARY KEY NOT NULL
+                CHECK(sha256 = lower(sha256) AND length(sha256) = 64),
+            byte_size INTEGER NOT NULL CHECK(byte_size > 0),
+            media_type TEXT NOT NULL CHECK(length(media_type) BETWEEN 3 AND 127),
+            original_extension TEXT NOT NULL CHECK(length(original_extension) BETWEEN 1 AND 10),
+            remote_blob_id TEXT,
+            verification_state TEXT NOT NULL
+                CHECK(verification_state IN ('pendingHash', 'pendingUpload', 'uploading', 'verified', 'failed', 'abandoned')),
+            last_error TEXT,
+            verified_at_ms INTEGER,
+            updated_at_ms INTEGER NOT NULL
+        );
+
+        CREATE TABLE asset_cloud_state (
+            asset_id TEXT PRIMARY KEY NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+            blob_sha256 TEXT NOT NULL REFERENCES cloud_blobs(sha256) ON DELETE RESTRICT,
+            remote_revision INTEGER,
+            materialization_state TEXT NOT NULL
+                CHECK(materialization_state IN ('localVerified', 'remoteVerified', 'remoteOnly', 'materializing', 'unavailable')),
+            last_error TEXT,
+            updated_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX asset_cloud_state_blob_index ON asset_cloud_state(blob_sha256);
+
+        CREATE TABLE migration_manifest (
+            asset_id TEXT PRIMARY KEY NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+            storage_key TEXT NOT NULL,
+            byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
+            source_modified_at_ms INTEGER NOT NULL,
+            sha256 TEXT,
+            captured_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL
+        );
+
+        CREATE TABLE sync_outbox (
+            id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+            idempotency_key TEXT NOT NULL UNIQUE,
+            operation TEXT NOT NULL,
+            payload BLOB NOT NULL,
+            state TEXT NOT NULL
+                CHECK(state IN ('pending', 'inFlight', 'applied', 'conflict', 'failed', 'cancelled')),
+            attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+            next_attempt_at_ms INTEGER NOT NULL,
+            last_error TEXT,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX sync_outbox_due_index ON sync_outbox(state, next_attempt_at_ms, created_at_ms);
+
+        CREATE TABLE sync_conflicts (
+            id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            local_payload BLOB NOT NULL,
+            remote_payload BLOB NOT NULL,
+            detected_at_ms INTEGER NOT NULL,
+            resolution TEXT NOT NULL CHECK(resolution IN ('unresolved', 'keptLocal', 'keptRemote', 'merged')),
+            updated_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX sync_conflicts_unresolved_index ON sync_conflicts(resolution, detected_at_ms);
+
+        CREATE TABLE sync_state (
+            key TEXT PRIMARY KEY NOT NULL CHECK(key = 'library'),
+            mode TEXT NOT NULL CHECK(mode IN ('localOnly', 'preparingMigration', 'syncing', 'cloudBacked', 'paused', 'failed')),
+            device_id TEXT,
+            change_cursor INTEGER NOT NULL DEFAULT 0 CHECK(change_cursor >= 0),
+            last_successful_sync_at_ms INTEGER,
+            last_error TEXT,
+            updated_at_ms INTEGER NOT NULL
+        );
+        INSERT INTO sync_state (key, mode, change_cursor, updated_at_ms)
+            VALUES ('library', 'localOnly', 0, CAST(unixepoch('subsec') * 1000 AS INTEGER));
+        """
+
+    private static let tagSchemaSQL = """
+        CREATE TABLE tags (
+            id TEXT PRIMARY KEY NOT NULL
+                CHECK(id = lower(id) AND length(id) = 36),
+            namespace TEXT NOT NULL
+                CHECK(namespace = lower(namespace) AND length(namespace) BETWEEN 1 AND 64),
+            value TEXT NOT NULL
+                CHECK(value = lower(value) AND length(value) BETWEEN 1 AND 64),
+            name TEXT NOT NULL COLLATE NOCASE
+                CHECK(name = lower(name) AND name = namespace || ':' || value),
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            UNIQUE(name COLLATE NOCASE)
+        );
+
+        CREATE TABLE asset_tags (
+            asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+            tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            added_at_ms INTEGER NOT NULL,
+            PRIMARY KEY(asset_id, tag_id)
+        );
+        """
+
+    private static let tagIndexSQL = """
+        CREATE INDEX tags_namespace_value_index ON tags(namespace, value, id);
+        CREATE INDEX asset_tags_tag_asset_index ON asset_tags(tag_id, asset_id);
+        """
+
+    private static let legacyTagSchemaSQL = """
+        CREATE TABLE tags_v4 (
+            id TEXT PRIMARY KEY NOT NULL
+                CHECK(id = lower(id) AND length(id) = 36),
+            namespace TEXT NOT NULL
+                CHECK(namespace = lower(namespace) AND length(namespace) BETWEEN 1 AND 64),
+            value TEXT NOT NULL
+                CHECK(value = lower(value) AND length(value) BETWEEN 1 AND 64),
+            name TEXT NOT NULL COLLATE NOCASE
+                CHECK(name = lower(name) AND name = namespace || ':' || value),
+            legacy_original_name TEXT,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            UNIQUE(name COLLATE NOCASE)
+        );
+        CREATE TABLE asset_tags_v4 (
+            asset_id TEXT NOT NULL,
+            tag_id TEXT NOT NULL,
+            added_at_ms INTEGER NOT NULL,
+            PRIMARY KEY(asset_id, tag_id)
+        );
+        """
+
+    private static let savedSearchSchemaSQL = """
+        CREATE TABLE saved_searches (
+            id TEXT PRIMARY KEY NOT NULL
+                CHECK(id = lower(id) AND length(id) = 36),
+            name TEXT NOT NULL COLLATE NOCASE
+                CHECK(name = trim(name) AND length(name) BETWEEN 1 AND 120),
+            filter_json TEXT NOT NULL CHECK(json_valid(filter_json)),
+            sort_json TEXT NOT NULL CHECK(json_valid(sort_json)),
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            UNIQUE(name COLLATE NOCASE)
+        );
+        """
+
+    private static let savedSearchIndexSQL = """
+        CREATE INDEX saved_searches_name_index ON saved_searches(name COLLATE NOCASE, id);
+        """
+
+    private static let legacySavedSearchSchemaSQL = """
+        CREATE TABLE saved_searches_v4 (
+            id TEXT PRIMARY KEY NOT NULL
+                CHECK(id = lower(id) AND length(id) = 36),
+            name TEXT NOT NULL COLLATE NOCASE
+                CHECK(name = trim(name) AND length(name) BETWEEN 1 AND 120),
+            filter_json TEXT NOT NULL CHECK(json_valid(filter_json)),
+            sort_json TEXT NOT NULL CHECK(json_valid(sort_json)),
+            legacy_query_json TEXT NOT NULL CHECK(json_valid(legacy_query_json)),
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            UNIQUE(name COLLATE NOCASE)
+        );
+        """
+
+    private static let trashSchemaSQL = """
+        CREATE TABLE asset_trash (
+            asset_id TEXT PRIMARY KEY NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+            prior_folder_id TEXT NOT NULL,
+            prior_album_ids_json TEXT NOT NULL CHECK(json_valid(prior_album_ids_json)),
+            prior_tag_ids_json TEXT NOT NULL CHECK(json_valid(prior_tag_ids_json)),
+            trashed_at_ms INTEGER NOT NULL,
+            scheduled_purge_at_ms INTEGER NOT NULL CHECK(scheduled_purge_at_ms >= trashed_at_ms)
+        );
+        """
+
+    private static let trashIndexSQL = """
+        CREATE INDEX asset_trash_retention_index ON asset_trash(scheduled_purge_at_ms, trashed_at_ms);
+        """
+
+    private static let legacyTrashSchemaSQL = """
+        CREATE TABLE asset_trash_v4 (
+            asset_id TEXT PRIMARY KEY NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+            prior_folder_id TEXT NOT NULL,
+            prior_album_ids_json TEXT NOT NULL CHECK(json_valid(prior_album_ids_json)),
+            prior_tag_ids_json TEXT NOT NULL CHECK(json_valid(prior_tag_ids_json)),
+            trashed_at_ms INTEGER NOT NULL,
+            scheduled_purge_at_ms INTEGER NOT NULL CHECK(scheduled_purge_at_ms >= trashed_at_ms)
+        );
+        """
+
+    private static let receiptSchemaSQL = """
+        CREATE TABLE export_receipts (
+            id TEXT PRIMARY KEY NOT NULL
+                CHECK(id = lower(id) AND length(id) = 36),
+            manifest_sha256 TEXT NOT NULL
+                CHECK(manifest_sha256 = lower(manifest_sha256) AND length(manifest_sha256) = 64),
+            asset_ids_json TEXT NOT NULL CHECK(json_valid(asset_ids_json)),
+            completed_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX export_receipts_completed_index ON export_receipts(completed_at_ms);
+
+        CREATE TABLE backup_manifests (
+            id TEXT PRIMARY KEY NOT NULL
+                CHECK(id = lower(id) AND length(id) = 36),
+            manifest_sha256 TEXT NOT NULL
+                CHECK(manifest_sha256 = lower(manifest_sha256) AND length(manifest_sha256) = 64),
+            recorded_at_ms INTEGER NOT NULL,
+            last_restore_drill_at_ms INTEGER,
+            last_restore_drill_result TEXT
         );
         """
 }

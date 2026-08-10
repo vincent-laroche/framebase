@@ -11,6 +11,8 @@ let package = Package(
         .library(name: "FramebaseDomain", targets: ["FramebaseDomain"]),
         .library(name: "FramebaseCatalog", targets: ["FramebaseCatalog"]),
         .library(name: "FramebaseMedia", targets: ["FramebaseMedia"])
+        , .library(name: "FramebaseAPIClient", targets: ["FramebaseAPIClient"])
+        , .library(name: "FramebaseSync", targets: ["FramebaseSync"])
     ],
     dependencies: [
         .package(
@@ -32,6 +34,14 @@ let package = Package(
             dependencies: ["FramebaseDomain"]
         ),
         .target(
+            name: "FramebaseAPIClient",
+            dependencies: ["FramebaseDomain"]
+        ),
+        .target(
+            name: "FramebaseSync",
+            dependencies: ["FramebaseDomain", "FramebaseCatalog", "FramebaseMedia", "FramebaseAPIClient"]
+        ),
+        .target(
             name: "FramebaseTestSupport",
             dependencies: ["FramebaseDomain"]
         ),
@@ -51,6 +61,14 @@ let package = Package(
         .testTarget(
             name: "FramebaseMediaTests",
             dependencies: ["FramebaseMedia", "FramebaseTestSupport"]
+        ),
+        .testTarget(
+            name: "FramebaseAPIClientTests",
+            dependencies: ["FramebaseAPIClient", "FramebaseDomain"]
+        ),
+        .testTarget(
+            name: "FramebaseSyncTests",
+            dependencies: ["FramebaseSync", "FramebaseCatalog", "FramebaseMedia", "FramebaseAPIClient", "FramebaseTestSupport"]
         )
     ]
 )
