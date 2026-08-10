@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import FramebaseDomain
 import GRDB
@@ -118,6 +119,56 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                 return nil
             }
             return try Self.workflowRun(from: row)
+        }
+    }
+
+    /// Issues a local-only opaque approval token for one exact pending run.
+    /// The catalog retains only its SHA-256 digest, never the presented value.
+    /// Remote adapters must use their own authenticated approval mechanism.
+    public func issueLocalCLIApprovalToken(
+        workflowRunID: UUID,
+        expiresAt: Date,
+        at date: Date = Date()
+    ) async throws -> String {
+        let rawToken = UUID().uuidString.lowercased()
+        let digest = Self.sha256Hex(rawToken)
+        try await databasePool.write { db in
+            let state: String? = try String.fetchOne(db, sql: "SELECT state FROM workflow_runs WHERE id = ?", arguments: [workflowRunID.uuidString.lowercased()])
+            guard state == WorkflowRunState.awaitingApproval.rawValue else {
+                throw WorkflowExecutionError.approvalRequired
+            }
+            try db.execute(sql: """
+                INSERT INTO workflow_cli_approval_tokens (workflow_run_id, token_sha256, expires_at_ms, issued_at_ms)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(workflow_run_id) DO UPDATE SET
+                    token_sha256 = excluded.token_sha256,
+                    expires_at_ms = excluded.expires_at_ms,
+                    issued_at_ms = excluded.issued_at_ms
+                """, arguments: [
+                    workflowRunID.uuidString.lowercased(), digest,
+                    CatalogDate.milliseconds(expiresAt), CatalogDate.milliseconds(date)
+                ])
+        }
+        return rawToken
+    }
+
+    /// Validates an opaque CLI approval against the exact persisted workflow
+    /// run. It performs no state transition and returns no token material.
+    public func validateLocalCLIApprovalToken(
+        workflowRunID: UUID,
+        token: String,
+        at date: Date = Date()
+    ) async throws -> Bool {
+        let digest = Self.sha256Hex(token)
+        return try await databasePool.read { db in
+            guard let row = try Row.fetchOne(db, sql: """
+                SELECT token_sha256, expires_at_ms FROM workflow_cli_approval_tokens
+                WHERE workflow_run_id = ?
+                """, arguments: [workflowRunID.uuidString.lowercased()]) else {
+                return false
+            }
+            let expiry = CatalogDate.date(row["expires_at_ms"] as Int64)
+            return expiry >= date && (row["token_sha256"] as String) == digest
         }
     }
 
@@ -298,5 +349,9 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
 
     private static func decode<Value: Decodable>(_ value: String) throws -> Value {
         try JSONDecoder().decode(Value.self, from: Data(value.utf8))
+    }
+
+    private static func sha256Hex(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }

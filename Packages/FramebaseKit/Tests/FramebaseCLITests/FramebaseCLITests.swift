@@ -38,6 +38,55 @@ struct FramebaseCLITests {
         await #expect(throws: FramebaseCLIError.self) {
             _ = try await FramebaseCLI.execute(arguments: ["search", "--catalog", "/tmp/catalog.sqlite"])
         }
-        #expect(try await FramebaseCLI.execute(arguments: ["--help"]).contains("read-only"))
+        #expect(try await FramebaseCLI.execute(arguments: ["--help"]).contains("proposal-first"))
     }
+
+    @Test("CLI tag proposal stays dry until its exact opaque approval is applied")
+    func proposalAndApplyUseTheSharedWorkflowBoundary() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "FramebaseCLITests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let catalogURL = directory.appending(path: "catalog.sqlite", directoryHint: .notDirectory)
+        let catalog = try CatalogDatabase(catalogURL: catalogURL)
+        let asset = try FixtureFactory.asset(parentFolderID: catalog.inboxID, filename: "proposal.jpg")
+        try await catalog.insertAsset(asset)
+
+        let proposalJSON = try await FramebaseCLI.execute(arguments: [
+            "proposal", "tag", "--catalog", catalogURL.path,
+            "--asset", asset.id.description, "--tag", "review:strong"
+        ])
+        let proposal = try JSONDecoder().decode(CLIProposal.self, from: Data(proposalJSON.utf8))
+        #expect(proposal.dryRun)
+        #expect(proposal.targetAssetIDs == [asset.id.description])
+        #expect(try await catalog.tags.tags(for: [asset.id])[asset.id] == nil)
+        let inspected = try await FramebaseCLI.execute(arguments: ["inspect", "--catalog", catalogURL.path, "--asset", asset.id.description])
+        #expect(inspected.contains("proposal.jpg"))
+        #expect(!inspected.contains("storageKey"))
+        let pendingJSON = try await FramebaseCLI.execute(arguments: ["get-operation", "--catalog", catalogURL.path, "--operation", proposal.operationID])
+        let pending = try JSONDecoder().decode(CLIOperation.self, from: Data(pendingJSON.utf8))
+        #expect(pending.state == "awaitingApproval")
+
+        await #expect(throws: FramebaseCLIError.invalidApprovalToken) {
+            _ = try await FramebaseCLI.execute(arguments: ["apply", "--catalog", catalogURL.path, "--operation", proposal.operationID, "--approval", "not-the-token"])
+        }
+        #expect(try await catalog.tags.tags(for: [asset.id])[asset.id] == nil)
+
+        let appliedJSON = try await FramebaseCLI.execute(arguments: ["apply", "--catalog", catalogURL.path, "--operation", proposal.operationID, "--approval", proposal.approvalToken])
+        let applied = try JSONDecoder().decode(CLIOperation.self, from: Data(appliedJSON.utf8))
+        #expect(applied.state == "succeeded")
+        #expect(applied.auditKinds == ["planCreated", "proposalCreated", "approvalGranted", "executionStarted", "executionSucceeded"])
+        #expect(try await catalog.tags.tags(for: [asset.id])[asset.id]?.map(\.name.rawValue) == ["review:strong"])
+    }
+}
+
+private struct CLIProposal: Decodable {
+    let operationID: String
+    let targetAssetIDs: [String]
+    let approvalToken: String
+    let dryRun: Bool
+}
+
+private struct CLIOperation: Decodable {
+    let state: String
+    let auditKinds: [String]
 }

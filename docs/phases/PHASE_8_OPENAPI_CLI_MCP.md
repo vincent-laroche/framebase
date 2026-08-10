@@ -21,7 +21,7 @@
 | --- | --- |
 | `Cloud/contracts/framebase-api-v1.openapi.json` | Canonical OpenAPI capability contract and schemas. |
 | `Packages/FramebaseKit/Sources/FramebaseDomain/AgentOperationModels.swift` | Typed operation/proposal/status contracts. |
-| `Packages/FramebaseKit/Sources/framebase_cli/` | Local CLI commands over domain use cases. |
+| `Packages/FramebaseKit/Sources/FramebaseCLI/` | Local CLI commands over domain use cases. |
 | `Cloud/apps/api/src/routes/` | Deferred authenticated HTTP adapters. |
 | `Cloud/apps/mcp/` | Deferred scoped MCP server using the same contract. |
 | `Cloud/apps/api/test/` | Contract, scope, revocation, proposal, and parity tests. |
@@ -41,10 +41,10 @@
 ## Task 3: Build the local `framebase` CLI
 
 - [x] Add read-only `diagnostics`, `list-folders`, and `search` commands with deterministic JSON output and no managed-original path/storage-key output.
-- [ ] Start with `search`, `inspect`, `list-folders`, `proposal`, `apply`, `get-operation`, and `diagnostics`.
-- [ ] Use machine-readable JSON by default where appropriate; redact protected metadata in errors.
-- [ ] Make bulk mutation commands dry-run by default and require an exact approval token to apply.
-- [ ] Test CLI output against generated catalogs and compare resulting domain state with the Mac-app use case.
+- [x] Start with `search`, `inspect`, `list-folders`, `proposal`, `apply`, `get-operation`, and `diagnostics`.
+- [x] Use machine-readable JSON by default where appropriate; redact protected metadata in errors.
+- [x] Make the implemented bulk tag command dry-run by default and require an exact short-lived opaque approval token to apply.
+- [x] Test CLI output against generated catalogs and compare resulting domain state with the Mac-app workflow use case.
 
 ## Task 4: Add remote HTTP/MCP adapters after identity approval
 

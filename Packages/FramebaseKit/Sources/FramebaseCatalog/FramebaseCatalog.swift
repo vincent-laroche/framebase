@@ -14,7 +14,8 @@ public enum FramebaseCatalogFoundation {
     public static let intelligenceMigrationIdentifier = "v8_local_intelligence"
     public static let visualLearningMigrationIdentifier = "v9_visual_learning_reviews"
     public static let workflowMigrationIdentifier = "v10_durable_workflow_runs"
-    public static let currentSchemaVersion = 10
+    public static let workflowCLIApprovalMigrationIdentifier = "v11_workflow_cli_approvals"
+    public static let currentSchemaVersion = 11
 
     public static func configure(_ configuration: inout Configuration) {
         configuration.foreignKeysEnabled = true
@@ -212,9 +213,8 @@ public final class CatalogDatabase: Sendable {
         }
     }
 
-    /// Applies only the starter template's explicitly initial logical folders
-    /// and controlled tag values. It never moves assets, changes original
-    /// storage, or creates the intentionally on-first-use folders.
+    /// Applies the starter template's logical folders and controlled tag
+    /// values. It never moves assets, changes original bytes, or storage keys.
     public func previewHairSolutionsLibraryTemplate() async throws -> LibraryTemplateApplicationPreview {
         try await databasePool.read { db in
             var foldersByPath: [String: FolderID] = [:]
@@ -245,11 +245,7 @@ public final class CatalogDatabase: Sendable {
                 }
             }
 
-            let controlledTagNames = try HairSolutionsLibraryTemplate.tagNamespaces
-                .flatMap { namespace in
-                    try namespace.allowedValues.map { try TagName(namespace: namespace.namespace, value: $0) }
-                }
-            let tagNamesToCreate = try controlledTagNames.filter { name in
+            let tagNamesToCreate = try HairSolutionsLibraryTemplate.initialTagNames().filter { name in
                 !(try Bool.fetchOne(
                     db,
                     sql: "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE)",
@@ -314,22 +310,19 @@ public final class CatalogDatabase: Sendable {
             }
 
             var createdTagIDs: [TagID] = []
-            for namespace in HairSolutionsLibraryTemplate.tagNamespaces where !namespace.allowedValues.isEmpty {
-                for value in namespace.allowedValues {
-                    let name = try TagName(namespace: namespace.namespace, value: value)
-                    let exists = try Bool.fetchOne(
-                        db,
-                        sql: "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE)",
-                        arguments: [name.rawValue]
-                    ) ?? false
-                    guard !exists else { continue }
-                    let tag = Tag(name: name, createdAt: now, updatedAt: now)
-                    try db.execute(
-                        sql: "INSERT INTO tags (id, namespace, value, name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?)",
-                        arguments: [tag.id.description, name.namespace, name.value, name.rawValue, milliseconds, milliseconds]
-                    )
-                    createdTagIDs.append(tag.id)
-                }
+            for name in try HairSolutionsLibraryTemplate.initialTagNames() {
+                let exists = try Bool.fetchOne(
+                    db,
+                    sql: "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE)",
+                    arguments: [name.rawValue]
+                ) ?? false
+                guard !exists else { continue }
+                let tag = Tag(name: name, createdAt: now, updatedAt: now)
+                try db.execute(
+                    sql: "INSERT INTO tags (id, namespace, value, name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?)",
+                    arguments: [tag.id.description, name.namespace, name.value, name.rawValue, milliseconds, milliseconds]
+                )
+                createdTagIDs.append(tag.id)
             }
             return LibraryTemplateApplicationReceipt(createdFolderIDs: createdFolderIDs, createdTagIDs: createdTagIDs)
         }
@@ -591,6 +584,17 @@ public final class CatalogDatabase: Sendable {
                 CREATE INDEX workflow_audit_events_run_captured_index ON workflow_audit_events(workflow_run_id, captured_at_ms ASC, id ASC);
                 """)
             try db.execute(sql: "UPDATE catalog_settings SET value = '10', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.workflowCLIApprovalMigrationIdentifier) { db in
+            try db.execute(sql: """
+                CREATE TABLE workflow_cli_approval_tokens (
+                    workflow_run_id TEXT PRIMARY KEY NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+                    token_sha256 TEXT NOT NULL CHECK(length(token_sha256) = 64),
+                    expires_at_ms INTEGER NOT NULL,
+                    issued_at_ms INTEGER NOT NULL
+                );
+                """)
+            try db.execute(sql: "UPDATE catalog_settings SET value = '11', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
         }
         return migrator
     }
