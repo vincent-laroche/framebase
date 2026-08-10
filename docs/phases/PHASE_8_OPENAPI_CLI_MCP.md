@@ -34,7 +34,7 @@
 
 ## Task 2: Generate and validate OpenAPI 3.1
 
-- [x] Add preview-only scope, operation, request, and approval-token schemas to the versioned OpenAPI contract without claiming a new deployed route.
+- [x] Add preview-only scope, identity, operation, request, and approval-token schemas to the versioned OpenAPI contract without claiming a new deployed route.
 - [x] Typecheck and contract-test the new preview schemas locally.
 - [x] Add a compatibility test that rejects undocumented API routes, methods, and required fields; proposal/approval request schemas remain closed to undeclared fields.
 
@@ -44,12 +44,12 @@
 - [x] Start with `search`, `inspect`, `list-folders`, `proposal`, `apply`, `get-operation`, and `diagnostics`.
 - [x] Use machine-readable JSON by default where appropriate; redact protected metadata in errors.
 - [x] Make the implemented bulk tag command dry-run by default and require an exact short-lived opaque approval token to apply.
-- [x] Test CLI output against generated catalogs and compare resulting domain state with the Mac-app workflow use case.
+- [x] Test CLI output against generated catalogs and compare resulting domain state with the Mac-app workflow use case, including identity-bound proposal/apply, cross-identity token denial, revocation denial, and queryable audit attribution.
 
 ## Task 4: Add remote HTTP/MCP adapters after identity approval
 
 - [ ] Map approved OpenAPI operations to scope-enforced Worker handlers and operation records.
-- [ ] Create a separate scoped agent identity/revocation model without exposing infrastructure credentials.
+- [x] Create a separate scoped, local-catalog agent identity/revocation model without exposing infrastructure credentials. Remote identity authentication remains deferred to its separately approved adapter.
 - [ ] Implement MCP tools as thin wrappers; do not duplicate workflow or mutation logic.
 - [ ] Prove scope denial, revocation, proposal expiry, audit attribution, and CLI/MCP parity.
 - [ ] Obtain explicit approval before remote identities, credentials, endpoint deployment, or MCP hosting.
@@ -58,6 +58,6 @@
 
 - [ ] CLI and MCP fixtures produce the same domain outcomes as the Mac use cases.
 - [ ] Bulk mutation remains proposal-first and approval-bound.
-- [ ] Scope/revocation tests deny out-of-policy access.
-- [ ] Every agent mutation is attributed and queryable in audit history.
+- [x] Scope/revocation tests deny out-of-policy local CLI access.
+- [x] Every local CLI mutation is attributed and queryable in audit history.
 - [ ] No initial tool can purge permanently or expose cloud credentials/raw buckets.

@@ -30,7 +30,13 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
         }
     }
 
-    public func enqueue(plan: WorkflowPlan, actor: WorkflowAuditActor, at date: Date = Date()) async throws -> WorkflowRun {
+    public func enqueue(
+        plan: WorkflowPlan,
+        actor: WorkflowAuditActor,
+        actorIdentityID: UUID? = nil,
+        originatingTool: String? = nil,
+        at date: Date = Date()
+    ) async throws -> WorkflowRun {
         let planJSON = try Self.encode(plan)
         let milliseconds = CatalogDate.milliseconds(date)
         return try await databasePool.write { db in
@@ -77,8 +83,8 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                     proposal.id.uuidString.lowercased(), run.id.uuidString.lowercased(), planJSON,
                     proposal.state.rawValue, milliseconds
                 ])
-            try Self.insertAudit(.init(workflowRunID: run.id, kind: .planCreated, actor: actor, summary: "Dry-run plan created", capturedAt: date), in: db)
-            try Self.insertAudit(.init(workflowRunID: run.id, kind: .proposalCreated, actor: actor, summary: "Proposal awaiting exact approval", capturedAt: date), in: db)
+            try Self.insertAudit(.init(workflowRunID: run.id, kind: .planCreated, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, summary: "Dry-run plan created", capturedAt: date), in: db)
+            try Self.insertAudit(.init(workflowRunID: run.id, kind: .proposalCreated, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, summary: "Proposal awaiting exact approval", capturedAt: date), in: db)
             return run
         }
     }
@@ -87,6 +93,8 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
         workflowRunID: UUID,
         currentSnapshot: WorkflowInputSnapshot,
         actor: WorkflowAuditActor,
+        actorIdentityID: UUID? = nil,
+        originatingTool: String? = nil,
         at date: Date = Date()
     ) async throws -> WorkflowRun {
         try await databasePool.write { db in
@@ -105,7 +113,7 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
             try db.execute(sql: "UPDATE workflow_proposals SET state = ? WHERE workflow_run_id = ?", arguments: [
                 WorkflowApprovalState.approved.rawValue, workflowRunID.uuidString.lowercased()
             ])
-            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .approvalGranted, actor: actor, summary: "Exact snapshot approved", capturedAt: date), in: db)
+            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .approvalGranted, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, summary: "Exact snapshot approved", capturedAt: date), in: db)
             guard let approved = try Row.fetchOne(db, sql: "SELECT * FROM workflow_runs WHERE id = ?", arguments: [workflowRunID.uuidString.lowercased()]) else {
                 throw CatalogError.invalidPersistedValue("workflow_run")
             }
@@ -127,6 +135,7 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
     /// Remote adapters must use their own authenticated approval mechanism.
     public func issueLocalCLIApprovalToken(
         workflowRunID: UUID,
+        agentIdentityID: UUID,
         expiresAt: Date,
         at date: Date = Date()
     ) async throws -> String {
@@ -138,15 +147,16 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                 throw WorkflowExecutionError.approvalRequired
             }
             try db.execute(sql: """
-                INSERT INTO workflow_cli_approval_tokens (workflow_run_id, token_sha256, expires_at_ms, issued_at_ms)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO workflow_cli_approval_tokens (workflow_run_id, token_sha256, expires_at_ms, issued_at_ms, agent_identity_id)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(workflow_run_id) DO UPDATE SET
                     token_sha256 = excluded.token_sha256,
                     expires_at_ms = excluded.expires_at_ms,
-                    issued_at_ms = excluded.issued_at_ms
+                    issued_at_ms = excluded.issued_at_ms,
+                    agent_identity_id = excluded.agent_identity_id
                 """, arguments: [
                     workflowRunID.uuidString.lowercased(), digest,
-                    CatalogDate.milliseconds(expiresAt), CatalogDate.milliseconds(date)
+                    CatalogDate.milliseconds(expiresAt), CatalogDate.milliseconds(date), agentIdentityID.uuidString.lowercased()
                 ])
         }
         return rawToken
@@ -157,18 +167,21 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
     public func validateLocalCLIApprovalToken(
         workflowRunID: UUID,
         token: String,
+        agentIdentityID: UUID,
         at date: Date = Date()
     ) async throws -> Bool {
         let digest = Self.sha256Hex(token)
         return try await databasePool.read { db in
             guard let row = try Row.fetchOne(db, sql: """
-                SELECT token_sha256, expires_at_ms FROM workflow_cli_approval_tokens
+                SELECT token_sha256, expires_at_ms, agent_identity_id FROM workflow_cli_approval_tokens
                 WHERE workflow_run_id = ?
                 """, arguments: [workflowRunID.uuidString.lowercased()]) else {
                 return false
             }
             let expiry = CatalogDate.date(row["expires_at_ms"] as Int64)
-            return expiry >= date && (row["token_sha256"] as String) == digest
+            return expiry >= date &&
+                (row["token_sha256"] as String) == digest &&
+                (row["agent_identity_id"] as String?) == agentIdentityID.uuidString.lowercased()
         }
     }
 
@@ -180,6 +193,8 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
         workflowRunID: UUID,
         currentSnapshot: WorkflowInputSnapshot,
         actor: WorkflowAuditActor,
+        actorIdentityID: UUID? = nil,
+        originatingTool: String? = nil,
         at date: Date = Date()
     ) async throws -> WorkflowRun {
         do {
@@ -201,7 +216,7 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                 try db.execute(sql: "UPDATE workflow_runs SET state = ?, updated_at_ms = ? WHERE id = ?", arguments: [
                     WorkflowRunState.running.rawValue, CatalogDate.milliseconds(date), workflowRunID.uuidString.lowercased()
                 ])
-                try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .executionStarted, actor: actor, summary: "Approved local execution started", capturedAt: date), in: db)
+                try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .executionStarted, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, summary: "Approved local execution started", capturedAt: date), in: db)
                 for step in plan.steps {
                     let result = try Self.execute(step: step, in: db, at: date)
                     try db.execute(sql: "UPDATE workflow_step_runs SET state = ?, result_json = ? WHERE workflow_run_id = ? AND sequence = ?", arguments: [
@@ -211,17 +226,17 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                 try db.execute(sql: "UPDATE workflow_runs SET state = ?, updated_at_ms = ? WHERE id = ?", arguments: [
                     WorkflowRunState.succeeded.rawValue, CatalogDate.milliseconds(date), workflowRunID.uuidString.lowercased()
                 ])
-                try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .executionSucceeded, actor: actor, summary: "Approved local execution completed", capturedAt: date), in: db)
+                try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .executionSucceeded, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, summary: "Approved local execution completed", capturedAt: date), in: db)
                 guard let completed = try Row.fetchOne(db, sql: "SELECT * FROM workflow_runs WHERE id = ?", arguments: [workflowRunID.uuidString.lowercased()]) else {
                     throw CatalogError.invalidPersistedValue("workflow_run")
                 }
                 return try Self.workflowRun(from: completed)
             }
         } catch let error as WorkflowValidationError where error == .snapshotDrift {
-            try await markStale(workflowRunID: workflowRunID, actor: actor, at: date)
+            try await markStale(workflowRunID: workflowRunID, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, at: date)
             throw error
         } catch {
-            try? await markFailed(workflowRunID: workflowRunID, actor: actor, at: date)
+            try? await markFailed(workflowRunID: workflowRunID, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, at: date)
             throw error
         }
     }
@@ -240,7 +255,7 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
         }
     }
 
-    public func undo(workflowRunID: UUID, actor: WorkflowAuditActor, at date: Date = Date()) async throws -> Bool {
+    public func undo(workflowRunID: UUID, actor: WorkflowAuditActor, actorIdentityID: UUID? = nil, originatingTool: String? = nil, at date: Date = Date()) async throws -> Bool {
         try await databasePool.write { db in
             guard let state: String = try String.fetchOne(db, sql: "SELECT state FROM workflow_runs WHERE id = ?", arguments: [workflowRunID.uuidString.lowercased()]),
                   state == WorkflowRunState.succeeded.rawValue else {
@@ -267,8 +282,8 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                     }
                 }
             }
-            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .undoStarted, actor: actor, summary: "Undoing exact workflow tag effects", capturedAt: date), in: db)
-            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .undoSucceeded, actor: actor, summary: "Removed \(removedMembershipCount) workflow-created tag membership\(removedMembershipCount == 1 ? "" : "s")", capturedAt: date), in: db)
+            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .undoStarted, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, summary: "Undoing exact workflow tag effects", capturedAt: date), in: db)
+            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .undoSucceeded, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, summary: "Removed \(removedMembershipCount) workflow-created tag membership\(removedMembershipCount == 1 ? "" : "s")", capturedAt: date), in: db)
             return true
         }
     }
@@ -281,6 +296,8 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
                     workflowRunID: workflowRunID,
                     kind: WorkflowAuditEventKind(rawValue: row["kind"] as String)!,
                     actor: WorkflowAuditActor(rawValue: row["actor"] as String)!,
+                    actorIdentityID: (row["actor_identity_id"] as String?).flatMap(UUID.init(uuidString:)),
+                    originatingTool: row["originating_tool"],
                     summary: row["summary"],
                     capturedAt: CatalogDate.date(row["captured_at_ms"] as Int64)
                 )
@@ -289,13 +306,13 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
     }
 
     private static func insertAudit(_ event: WorkflowAuditEvent, in db: Database) throws {
-        try db.execute(sql: "INSERT INTO workflow_audit_events (id, workflow_run_id, kind, actor, summary, captured_at_ms) VALUES (?, ?, ?, ?, ?, ?)", arguments: [
+        try db.execute(sql: "INSERT INTO workflow_audit_events (id, workflow_run_id, kind, actor, actor_identity_id, originating_tool, summary, captured_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", arguments: [
             event.id.uuidString.lowercased(), event.workflowRunID.uuidString.lowercased(), event.kind.rawValue,
-            event.actor.rawValue, event.summary, CatalogDate.milliseconds(event.capturedAt)
+            event.actor.rawValue, event.actorIdentityID?.uuidString.lowercased(), event.originatingTool, event.summary, CatalogDate.milliseconds(event.capturedAt)
         ])
     }
 
-    private func markStale(workflowRunID: UUID, actor: WorkflowAuditActor, at date: Date) async throws {
+    private func markStale(workflowRunID: UUID, actor: WorkflowAuditActor, actorIdentityID: UUID?, originatingTool: String?, at date: Date) async throws {
         try await databasePool.write { db in
             try db.execute(sql: "UPDATE workflow_runs SET state = ?, updated_at_ms = ? WHERE id = ? AND state IN (?, ?)", arguments: [
                 WorkflowRunState.stale.rawValue, CatalogDate.milliseconds(date), workflowRunID.uuidString.lowercased(),
@@ -304,11 +321,11 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
             try db.execute(sql: "UPDATE workflow_proposals SET state = ? WHERE workflow_run_id = ?", arguments: [
                 WorkflowApprovalState.stale.rawValue, workflowRunID.uuidString.lowercased()
             ])
-            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .snapshotMarkedStale, actor: actor, summary: "Catalog state changed; a new preview is required", capturedAt: date), in: db)
+            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .snapshotMarkedStale, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, summary: "Catalog state changed; a new preview is required", capturedAt: date), in: db)
         }
     }
 
-    private func markFailed(workflowRunID: UUID, actor: WorkflowAuditActor, at date: Date) async throws {
+    private func markFailed(workflowRunID: UUID, actor: WorkflowAuditActor, actorIdentityID: UUID?, originatingTool: String?, at date: Date) async throws {
         try await databasePool.write { db in
             try db.execute(sql: "UPDATE workflow_runs SET state = ?, updated_at_ms = ? WHERE id = ? AND state = ?", arguments: [
                 WorkflowRunState.failed.rawValue, CatalogDate.milliseconds(date), workflowRunID.uuidString.lowercased(), WorkflowRunState.queued.rawValue
@@ -316,7 +333,7 @@ public struct CatalogWorkflowRepository: WorkflowRepository, Sendable {
             try db.execute(sql: "UPDATE workflow_step_runs SET state = ? WHERE workflow_run_id = ? AND state = ?", arguments: [
                 WorkflowRunState.failed.rawValue, workflowRunID.uuidString.lowercased(), WorkflowRunState.awaitingApproval.rawValue
             ])
-            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .executionFailed, actor: actor, summary: "Execution failed before catalog changes were committed", capturedAt: date), in: db)
+            try Self.insertAudit(.init(workflowRunID: workflowRunID, kind: .executionFailed, actor: actor, actorIdentityID: actorIdentityID, originatingTool: originatingTool, summary: "Execution failed before catalog changes were committed", capturedAt: date), in: db)
         }
     }
 

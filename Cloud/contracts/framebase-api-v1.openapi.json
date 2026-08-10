@@ -246,6 +246,43 @@
         ],
         "description": "Preview-only Phase 8 scope vocabulary. Remote identities and endpoints are not deployed."
       },
+      "AgentIdentity": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "scopes",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentScope"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "revoked"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "description": "A revocable delegated principal. It never includes credential material; this contract does not create a remote identity endpoint."
+      },
       "AgentOperationKind": {
         "type": "string",
         "enum": [

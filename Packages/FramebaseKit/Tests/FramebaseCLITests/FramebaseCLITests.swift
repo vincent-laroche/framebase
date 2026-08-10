@@ -50,10 +50,15 @@ struct FramebaseCLITests {
         let catalog = try CatalogDatabase(catalogURL: catalogURL)
         let asset = try FixtureFactory.asset(parentFolderID: catalog.inboxID, filename: "proposal.jpg")
         try await catalog.insertAsset(asset)
+        let identityJSON = try await FramebaseCLI.execute(arguments: [
+            "agent", "create", "--catalog", catalogURL.path, "--name", "Fixture agent",
+            "--scope", "workflows.run", "--scope", "assets.organize"
+        ])
+        let identity = try JSONDecoder().decode(CLIAgentIdentity.self, from: Data(identityJSON.utf8))
 
         let proposalJSON = try await FramebaseCLI.execute(arguments: [
             "proposal", "tag", "--catalog", catalogURL.path,
-            "--asset", asset.id.description, "--tag", "review:strong"
+            "--agent", identity.id, "--asset", asset.id.description, "--tag", "review:strong"
         ])
         let proposal = try JSONDecoder().decode(CLIProposal.self, from: Data(proposalJSON.utf8))
         #expect(proposal.dryRun)
@@ -66,16 +71,31 @@ struct FramebaseCLITests {
         let pending = try JSONDecoder().decode(CLIOperation.self, from: Data(pendingJSON.utf8))
         #expect(pending.state == "awaitingApproval")
 
+        let otherIdentityJSON = try await FramebaseCLI.execute(arguments: [
+            "agent", "create", "--catalog", catalogURL.path, "--name", "Other fixture agent",
+            "--scope", "workflows.run", "--scope", "assets.organize"
+        ])
+        let otherIdentity = try JSONDecoder().decode(CLIAgentIdentity.self, from: Data(otherIdentityJSON.utf8))
+
         await #expect(throws: FramebaseCLIError.invalidApprovalToken) {
-            _ = try await FramebaseCLI.execute(arguments: ["apply", "--catalog", catalogURL.path, "--operation", proposal.operationID, "--approval", "not-the-token"])
+            _ = try await FramebaseCLI.execute(arguments: ["apply", "--catalog", catalogURL.path, "--agent", otherIdentity.id, "--operation", proposal.operationID, "--approval", proposal.approvalToken])
         }
         #expect(try await catalog.tags.tags(for: [asset.id])[asset.id] == nil)
 
-        let appliedJSON = try await FramebaseCLI.execute(arguments: ["apply", "--catalog", catalogURL.path, "--operation", proposal.operationID, "--approval", proposal.approvalToken])
+        let appliedJSON = try await FramebaseCLI.execute(arguments: ["apply", "--catalog", catalogURL.path, "--agent", identity.id, "--operation", proposal.operationID, "--approval", proposal.approvalToken])
         let applied = try JSONDecoder().decode(CLIOperation.self, from: Data(appliedJSON.utf8))
         #expect(applied.state == "succeeded")
         #expect(applied.auditKinds == ["planCreated", "proposalCreated", "approvalGranted", "executionStarted", "executionSucceeded"])
+        #expect(applied.audit.allSatisfy { $0.agentIdentityID == identity.id && $0.originatingTool == "framebase-cli" })
         #expect(try await catalog.tags.tags(for: [asset.id])[asset.id]?.map(\.name.rawValue) == ["review:strong"])
+
+        _ = try await FramebaseCLI.execute(arguments: ["agent", "revoke", "--catalog", catalogURL.path, "--agent", identity.id])
+        await #expect(throws: FramebaseCLIError.agentIdentityUnavailable) {
+            _ = try await FramebaseCLI.execute(arguments: [
+                "proposal", "tag", "--catalog", catalogURL.path, "--agent", identity.id,
+                "--asset", asset.id.description, "--tag", "review:strong"
+            ])
+        }
     }
 }
 
@@ -89,4 +109,8 @@ private struct CLIProposal: Decodable {
 private struct CLIOperation: Decodable {
     let state: String
     let auditKinds: [String]
+    let audit: [CLIAuditEvent]
 }
+
+private struct CLIAgentIdentity: Decodable { let id: String }
+private struct CLIAuditEvent: Decodable { let agentIdentityID: String?; let originatingTool: String? }

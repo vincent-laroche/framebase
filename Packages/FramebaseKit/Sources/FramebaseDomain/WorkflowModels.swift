@@ -320,6 +320,8 @@ public struct WorkflowAuditEvent: Codable, Hashable, Sendable {
     public let workflowRunID: UUID
     public let kind: WorkflowAuditEventKind
     public let actor: WorkflowAuditActor
+    public let actorIdentityID: UUID?
+    public let originatingTool: String?
     public let summary: String
     public let capturedAt: Date
 
@@ -328,6 +330,8 @@ public struct WorkflowAuditEvent: Codable, Hashable, Sendable {
         workflowRunID: UUID,
         kind: WorkflowAuditEventKind,
         actor: WorkflowAuditActor,
+        actorIdentityID: UUID? = nil,
+        originatingTool: String? = nil,
         summary: String,
         capturedAt: Date
     ) {
@@ -335,6 +339,8 @@ public struct WorkflowAuditEvent: Codable, Hashable, Sendable {
         self.workflowRunID = workflowRunID
         self.kind = kind
         self.actor = actor
+        self.actorIdentityID = actorIdentityID
+        self.originatingTool = originatingTool?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.summary = summary
         self.capturedAt = capturedAt
     }

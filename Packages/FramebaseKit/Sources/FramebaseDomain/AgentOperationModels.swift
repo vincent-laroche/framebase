@@ -3,6 +3,8 @@ import Foundation
 public enum AgentOperationValidationError: Error, Equatable, Sendable {
     case invalidCatalogRevision
     case expiredApproval
+    case invalidIdentityName
+    case emptyIdentityScopes
 }
 
 public enum AgentScope: String, Codable, CaseIterable, Hashable, Sendable {
@@ -29,12 +31,22 @@ public struct AgentIdentity: Codable, Hashable, Sendable {
 
     public init(id: UUID = UUID(), name: String, scopes: Set<AgentScope>, status: AgentIdentityStatus = .active) {
         self.id = id
-        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.name = normalizedName.isEmpty ? "Unnamed local agent" : String(normalizedName.prefix(120))
         self.scopes = scopes
         self.status = status
     }
 
     public var isActive: Bool { status == .active }
+}
+
+/// A local catalog registry for explicitly delegated agent principals. It
+/// stores no credential material; remote authentication remains a separate
+/// adapter concern.
+public protocol AgentIdentityRepository: Sendable {
+    func create(_ identity: AgentIdentity, at date: Date) async throws
+    func identity(id: UUID) async throws -> AgentIdentity?
+    func revoke(id: UUID, at date: Date) async throws
 }
 
 public enum AgentOperationKind: String, Codable, CaseIterable, Hashable, Sendable {

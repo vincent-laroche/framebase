@@ -27,6 +27,7 @@ const APPROVED_REQUIRED_FIELDS: Record<string, string[]> = {
   ChangeEvent: ['revision', 'entityType', 'entityId', 'operation', 'payload', 'actorId', 'createdAt'],
   AgentOperationRequest: ['id', 'operation', 'targetAssetIds', 'catalogRevision'],
   AgentApprovalToken: ['id', 'operationId', 'targetAssetIds', 'catalogRevision', 'expiresAt'],
+  AgentIdentity: ['id', 'name', 'scopes', 'status'],
   MutationOperation: ['type', 'targetId', 'payload']
 };
 
@@ -54,6 +55,7 @@ describe('versioned API contract', () => {
     expect(operations).not.toContain('rawStorageAccess');
     expect(schemas.AgentOperationRequest.required).toEqual(['id', 'operation', 'targetAssetIds', 'catalogRevision']);
     expect(schemas.AgentApprovalToken.required).toEqual(['id', 'operationId', 'targetAssetIds', 'catalogRevision', 'expiresAt']);
+    expect(schemas.AgentIdentity.properties.scopes.items.$ref).toBe('#/components/schemas/AgentScope');
   });
 
   it('rejects undocumented routes and required request fields', () => {
@@ -65,5 +67,6 @@ describe('versioned API contract', () => {
     }
     expect(schemas.AgentOperationRequest.additionalProperties).toBe(false);
     expect(schemas.AgentApprovalToken.additionalProperties).toBe(false);
+    expect(schemas.AgentIdentity.additionalProperties).toBe(false);
   });
 });

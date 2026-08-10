@@ -11,14 +11,17 @@ public enum FramebaseCLIError: LocalizedError, Equatable, Sendable {
     case missingTagName
     case missingOperationID
     case missingApprovalToken
+    case missingAgentIdentity
     case invalidIdentifier(String)
     case invalidApprovalToken
+    case agentIdentityUnavailable
+    case insufficientAgentScope
     case assetNotFound
     case unexpectedArgument(String)
 
     public var errorDescription: String? {
         switch self {
-        case .missingCommand: "Choose diagnostics, list-folders, search, inspect, proposal, apply, or get-operation."
+        case .missingCommand: "Choose diagnostics, list-folders, search, inspect, agent, proposal, apply, or get-operation."
         case let .unsupportedCommand(command): "Unsupported command: \(command)."
         case .missingCatalogPath: "Pass --catalog followed by a catalog.sqlite path."
         case .missingSearchText: "Pass --text followed by a search value."
@@ -26,8 +29,11 @@ public enum FramebaseCLIError: LocalizedError, Equatable, Sendable {
         case .missingTagName: "Pass --tag followed by a namespace:value tag."
         case .missingOperationID: "Pass --operation followed by a proposal UUID."
         case .missingApprovalToken: "Pass --approval followed by the exact opaque token returned by proposal."
+        case .missingAgentIdentity: "Pass --agent followed by an active local agent identity UUID."
         case let .invalidIdentifier(value): "Invalid UUID: \(value)."
         case .invalidApprovalToken: "The approval token is invalid or expired. Create a new proposal."
+        case .agentIdentityUnavailable: "The local agent identity is missing or revoked."
+        case .insufficientAgentScope: "The local agent identity does not have the delegated scope for this action."
         case .assetNotFound: "The requested asset does not exist."
         case let .unexpectedArgument(argument): "Unexpected argument: \(argument)."
         }
@@ -44,13 +50,16 @@ public enum FramebaseCLI {
       framebase list-folders --catalog /path/to/catalog.sqlite
       framebase search --catalog /path/to/catalog.sqlite --text "query"
       framebase inspect --catalog /path/to/catalog.sqlite --asset UUID
-      framebase proposal tag --catalog /path/to/catalog.sqlite --asset UUID [--asset UUID] --tag namespace:value
+      framebase agent create --catalog /path/to/catalog.sqlite --name "Trusted script" --scope workflows.run --scope assets.organize
+      framebase agent revoke --catalog /path/to/catalog.sqlite --agent UUID
+      framebase proposal tag --catalog /path/to/catalog.sqlite --agent UUID --asset UUID [--asset UUID] --tag namespace:value
       framebase get-operation --catalog /path/to/catalog.sqlite --operation UUID
-      framebase apply --catalog /path/to/catalog.sqlite --operation UUID --approval OPAQUE_TOKEN
+      framebase apply --catalog /path/to/catalog.sqlite --agent UUID --operation UUID --approval OPAQUE_TOKEN
 
-    Mutations are proposal-first. `proposal tag` changes no organization and
-    returns a short-lived opaque approval token; `apply` requires that exact
-    token and an unchanged logical snapshot. The CLI never exposes
+    Mutations are proposal-first. Create an explicit local agent identity
+    first; `proposal tag` changes no organization and returns a short-lived
+    opaque approval token bound to that identity; `apply` requires that exact
+    token, identity, and an unchanged logical snapshot. The CLI never exposes
     managed-original paths, storage keys, cloud credentials, or permanent purge.
     """
 
@@ -73,32 +82,42 @@ public enum FramebaseCLI {
             guard let asset = try await catalog.assets.asset(id: assetID) else { throw FramebaseCLIError.assetNotFound }
             let tags = try await catalog.tags.tags(for: [assetID])[assetID] ?? []
             return try encode(InspectionResponse(asset: AssetResponse(asset), tagNames: tags.map { $0.name.rawValue }.sorted()))
-        case let .proposeTag(assetIDs, tagName):
-            return try await proposeTag(assetIDs: assetIDs, tagName: tagName, catalog: catalog)
+        case let .createAgent(name, scopes):
+            let identity = AgentIdentity(name: name, scopes: scopes)
+            try await catalog.agentIdentities.create(identity, at: .now)
+            return try encode(AgentIdentityResponse(identity))
+        case let .revokeAgent(identityID):
+            try await catalog.agentIdentities.revoke(id: identityID, at: .now)
+            guard let identity = try await catalog.agentIdentities.identity(id: identityID) else { throw FramebaseCLIError.agentIdentityUnavailable }
+            return try encode(AgentIdentityResponse(identity))
+        case let .proposeTag(assetIDs, tagName, agentID):
+            let agent = try await activeAgent(id: agentID, requiring: [.workflowsRun, .assetsOrganize], catalog: catalog)
+            return try await proposeTag(assetIDs: assetIDs, tagName: tagName, agent: agent, catalog: catalog)
         case let .getOperation(workflowRunID):
             return try await operationResponse(workflowRunID: workflowRunID, catalog: catalog)
-        case let .apply(workflowRunID, approvalToken):
-            guard try await catalog.workflows.validateLocalCLIApprovalToken(workflowRunID: workflowRunID, token: approvalToken) else {
+        case let .apply(workflowRunID, approvalToken, agentID):
+            let agent = try await activeAgent(id: agentID, requiring: [.workflowsRun, .assetsOrganize], catalog: catalog)
+            guard try await catalog.workflows.validateLocalCLIApprovalToken(workflowRunID: workflowRunID, token: approvalToken, agentIdentityID: agent.id) else {
                 throw FramebaseCLIError.invalidApprovalToken
             }
             guard let proposal = try await catalog.workflows.proposal(for: workflowRunID) else {
                 throw FramebaseCLIError.invalidIdentifier(workflowRunID.uuidString)
             }
             let snapshot = try await catalog.workflowInputSnapshot(assetIDs: Set(proposal.plan.snapshot.assetIDs))
-            _ = try await catalog.workflows.approve(workflowRunID: workflowRunID, currentSnapshot: snapshot, actor: .agent, at: .now)
-            _ = try await catalog.workflows.executeApproved(workflowRunID: workflowRunID, currentSnapshot: snapshot, actor: .agent, at: .now)
+            _ = try await catalog.workflows.approve(workflowRunID: workflowRunID, currentSnapshot: snapshot, actor: .agent, actorIdentityID: agent.id, originatingTool: "framebase-cli", at: .now)
+            _ = try await catalog.workflows.executeApproved(workflowRunID: workflowRunID, currentSnapshot: snapshot, actor: .agent, actorIdentityID: agent.id, originatingTool: "framebase-cli", at: .now)
             return try await operationResponse(workflowRunID: workflowRunID, catalog: catalog)
         }
     }
 
-    private static func proposeTag(assetIDs: [AssetID], tagName: TagName, catalog: CatalogDatabase) async throws -> String {
+    private static func proposeTag(assetIDs: [AssetID], tagName: TagName, agent: AgentIdentity, catalog: CatalogDatabase) async throws -> String {
         let snapshot = try await catalog.workflowInputSnapshot(assetIDs: Set(assetIDs))
         let definition = try WorkflowDefinition(name: "CLI apply \(tagName.rawValue)", trigger: .manualSelection, actions: [.proposeTag(tagName.rawValue)])
         let plan = try WorkflowPlanner().plan(definition: definition, snapshot: snapshot)
         try await catalog.workflows.store(definition, at: .now)
-        let run = try await catalog.workflows.enqueue(plan: plan, actor: .agent, at: .now)
+        let run = try await catalog.workflows.enqueue(plan: plan, actor: .agent, actorIdentityID: agent.id, originatingTool: "framebase-cli", at: .now)
         let expiry = Date().addingTimeInterval(15 * 60)
-        let token = try await catalog.workflows.issueLocalCLIApprovalToken(workflowRunID: run.id, expiresAt: expiry, at: .now)
+        let token = try await catalog.workflows.issueLocalCLIApprovalToken(workflowRunID: run.id, agentIdentityID: agent.id, expiresAt: expiry, at: .now)
         return try encode(ProposalResponse(operationID: run.id.uuidString.lowercased(), state: run.state.rawValue, targetAssetIDs: plan.snapshot.assetIDs.map(\.description), action: "addTags", tagName: tagName.rawValue, catalogRevision: plan.snapshot.catalogRevision, sourceFingerprint: plan.snapshot.sourceFingerprint, approvalToken: token, approvalExpiresAt: expiry, dryRun: true))
     }
 
@@ -107,7 +126,15 @@ public enum FramebaseCLI {
             throw FramebaseCLIError.invalidIdentifier(workflowRunID.uuidString)
         }
         let audit = try await catalog.workflows.auditEvents(for: workflowRunID)
-        return try encode(OperationResponse(operationID: run.id.uuidString.lowercased(), state: run.state.rawValue, proposalState: proposal.state.rawValue, targetAssetIDs: proposal.plan.snapshot.assetIDs.map(\.description), catalogRevision: proposal.plan.snapshot.catalogRevision, sourceFingerprint: proposal.plan.snapshot.sourceFingerprint, auditKinds: audit.map { $0.kind.rawValue }))
+        return try encode(OperationResponse(operationID: run.id.uuidString.lowercased(), state: run.state.rawValue, proposalState: proposal.state.rawValue, targetAssetIDs: proposal.plan.snapshot.assetIDs.map(\.description), catalogRevision: proposal.plan.snapshot.catalogRevision, sourceFingerprint: proposal.plan.snapshot.sourceFingerprint, auditKinds: audit.map { $0.kind.rawValue }, audit: audit.map(AuditResponse.init)))
+    }
+
+    private static func activeAgent(id: UUID, requiring scopes: Set<AgentScope>, catalog: CatalogDatabase) async throws -> AgentIdentity {
+        guard let identity = try await catalog.agentIdentities.identity(id: id), identity.isActive else {
+            throw FramebaseCLIError.agentIdentityUnavailable
+        }
+        guard scopes.isSubset(of: identity.scopes) else { throw FramebaseCLIError.insufficientAgentScope }
+        return identity
     }
 
     private static func encode<Value: Encodable>(_ response: Value) throws -> String {
@@ -119,8 +146,9 @@ public enum FramebaseCLI {
 
     private enum CommandKind {
         case diagnostics, listFolders, search(String), inspect(AssetID)
-        case proposeTag([AssetID], TagName)
-        case getOperation(UUID), apply(UUID, String)
+        case createAgent(String, Set<AgentScope>), revokeAgent(UUID)
+        case proposeTag([AssetID], TagName, UUID)
+        case getOperation(UUID), apply(UUID, String, UUID)
     }
 
     private struct Command {
@@ -139,17 +167,36 @@ public enum FramebaseCLI {
                 guard let text = try Self.value(for: "--text", in: &values), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw FramebaseCLIError.missingSearchText }
                 kind = .search(text)
             case "inspect": kind = .inspect(try Self.assetID(from: try Self.requiredValue(for: "--asset", in: &values)))
+            case "agent":
+                guard let action = values.first else { throw FramebaseCLIError.unsupportedCommand("agent") }
+                values.removeFirst()
+                switch action {
+                case "create":
+                    guard let name = try Self.value(for: "--name", in: &values), !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        throw FramebaseCLIError.unexpectedArgument("--name")
+                    }
+                    let rawScopes = Self.values(for: "--scope", in: &values)
+                    let scopes = Set(rawScopes.compactMap(AgentScope.init(rawValue:)))
+                    guard !scopes.isEmpty, scopes.count == Set(rawScopes).count else { throw FramebaseCLIError.insufficientAgentScope }
+                    kind = .createAgent(name, scopes)
+                case "revoke":
+                    kind = .revokeAgent(try Self.uuid(from: try Self.requiredValue(for: "--agent", in: &values)))
+                default:
+                    throw FramebaseCLIError.unsupportedCommand("agent \(action)")
+                }
             case "proposal":
                 guard values.first == "tag" else { throw FramebaseCLIError.unsupportedCommand(values.first ?? "proposal") }
                 values.removeFirst()
                 let assetIDs = try Self.assetIDs(from: Self.values(for: "--asset", in: &values))
                 guard let rawTag = try Self.value(for: "--tag", in: &values) else { throw FramebaseCLIError.missingTagName }
-                kind = .proposeTag(assetIDs, try TagName(rawTag))
+                let agentID = try Self.uuid(from: try Self.requiredValue(for: "--agent", in: &values))
+                kind = .proposeTag(assetIDs, try TagName(rawTag), agentID)
             case "get-operation": kind = .getOperation(try Self.uuid(from: try Self.requiredValue(for: "--operation", in: &values)))
             case "apply":
                 let operationID = try Self.uuid(from: try Self.requiredValue(for: "--operation", in: &values))
                 let token = try Self.requiredValue(for: "--approval", in: &values)
-                kind = .apply(operationID, token)
+                let agentID = try Self.uuid(from: try Self.requiredValue(for: "--agent", in: &values))
+                kind = .apply(operationID, token, agentID)
             default: throw FramebaseCLIError.unsupportedCommand(name)
             }
             if let unexpected = values.first { throw FramebaseCLIError.unexpectedArgument(unexpected) }
@@ -212,5 +259,13 @@ public enum FramebaseCLI {
     private struct SearchResponse: Encodable { let totalCount: Int; let assets: [AssetResponse] }
     private struct InspectionResponse: Encodable { let asset: AssetResponse; let tagNames: [String] }
     private struct ProposalResponse: Encodable { let operationID: String; let state: String; let targetAssetIDs: [String]; let action: String; let tagName: String; let catalogRevision: Int64; let sourceFingerprint: String; let approvalToken: String; let approvalExpiresAt: Date; let dryRun: Bool }
-    private struct OperationResponse: Encodable { let operationID: String; let state: String; let proposalState: String; let targetAssetIDs: [String]; let catalogRevision: Int64; let sourceFingerprint: String; let auditKinds: [String] }
+    private struct AgentIdentityResponse: Encodable {
+        let id: String; let name: String; let scopes: [String]; let status: String
+        init(_ identity: AgentIdentity) { id = identity.id.uuidString.lowercased(); name = identity.name; scopes = identity.scopes.map(\.rawValue).sorted(); status = identity.status.rawValue }
+    }
+    private struct AuditResponse: Encodable {
+        let kind: String; let actor: String; let agentIdentityID: String?; let originatingTool: String?
+        init(_ event: WorkflowAuditEvent) { kind = event.kind.rawValue; actor = event.actor.rawValue; agentIdentityID = event.actorIdentityID?.uuidString.lowercased(); originatingTool = event.originatingTool }
+    }
+    private struct OperationResponse: Encodable { let operationID: String; let state: String; let proposalState: String; let targetAssetIDs: [String]; let catalogRevision: Int64; let sourceFingerprint: String; let auditKinds: [String]; let audit: [AuditResponse] }
 }

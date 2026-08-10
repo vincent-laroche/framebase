@@ -16,7 +16,8 @@ public enum FramebaseCatalogFoundation {
     public static let workflowMigrationIdentifier = "v10_durable_workflow_runs"
     public static let workflowCLIApprovalMigrationIdentifier = "v11_workflow_cli_approvals"
     public static let workflowUndoMigrationIdentifier = "v12_workflow_undo_effects"
-    public static let currentSchemaVersion = 12
+    public static let agentIdentityMigrationIdentifier = "v13_agent_identities"
+    public static let currentSchemaVersion = 13
 
     public static func configure(_ configuration: inout Configuration) {
         configuration.foreignKeysEnabled = true
@@ -61,6 +62,7 @@ public final class CatalogDatabase: Sendable {
     public let intelligence: CatalogIntelligenceRepository
     public let visualLearning: CatalogVisualLearningRepository
     public let workflows: CatalogWorkflowRepository
+    public let agentIdentities: CatalogAgentIdentityRepository
     public let cloud: CatalogCloudRepository
 
     let databasePool: DatabasePool
@@ -105,6 +107,7 @@ public final class CatalogDatabase: Sendable {
         self.intelligence = CatalogIntelligenceRepository(databasePool: pool)
         self.visualLearning = CatalogVisualLearningRepository(databasePool: pool)
         self.workflows = CatalogWorkflowRepository(databasePool: pool)
+        self.agentIdentities = CatalogAgentIdentityRepository(databasePool: pool)
         self.cloud = CatalogCloudRepository(databasePool: pool)
     }
 
@@ -615,6 +618,23 @@ public final class CatalogDatabase: Sendable {
                 CREATE INDEX workflow_audit_events_run_captured_index ON workflow_audit_events(workflow_run_id, captured_at_ms ASC, id ASC);
                 """)
             try db.execute(sql: "UPDATE catalog_settings SET value = '12', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.agentIdentityMigrationIdentifier) { db in
+            try db.execute(sql: """
+                CREATE TABLE agent_identities (
+                    id TEXT PRIMARY KEY NOT NULL CHECK(id = lower(id) AND length(id) = 36),
+                    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+                    scopes_json TEXT NOT NULL CHECK(json_valid(scopes_json)),
+                    status TEXT NOT NULL CHECK(status IN ('active', 'revoked')),
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                ALTER TABLE workflow_audit_events ADD COLUMN actor_identity_id TEXT CHECK(actor_identity_id IS NULL OR (actor_identity_id = lower(actor_identity_id) AND length(actor_identity_id) = 36));
+                ALTER TABLE workflow_audit_events ADD COLUMN originating_tool TEXT CHECK(originating_tool IS NULL OR length(originating_tool) BETWEEN 1 AND 120);
+                ALTER TABLE workflow_cli_approval_tokens ADD COLUMN agent_identity_id TEXT CHECK(agent_identity_id IS NULL OR (agent_identity_id = lower(agent_identity_id) AND length(agent_identity_id) = 36));
+                CREATE INDEX workflow_audit_events_actor_identity_index ON workflow_audit_events(actor_identity_id, captured_at_ms ASC);
+                """)
+            try db.execute(sql: "UPDATE catalog_settings SET value = '13', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
         }
         return migrator
     }
