@@ -1,6 +1,6 @@
 # Phase 2 — Cloud Contract and Safety Spine
 
-**Status:** Active execution plan (re-baselined 2026-08-09)
+**Status:** Complete (2026-08-09)
 **Authority:** `docs/MASTER_ROADMAP.md` governs product scope. This plan governs Phase 2 implementation and exit evidence.
 
 ## 1. Outcome and hard boundary
@@ -216,6 +216,15 @@ Phase 2 is complete only when all of the following are recorded in `PROJECT.md`:
 6. The current local Framebase library remains untouched and all native regression gates pass.
 
 The Phase 3 entry handoff includes the frozen HTTP contract/version, migration state, fixture acceptance transcript with secrets redacted, open enrollment limitations, usage/cost snapshot, and proof that no personal media was used.
+
+### Recorded exit evidence (2026-08-09)
+
+- Approved development release deployed Worker version `25ab4e1f-463b-4c4e-8311-e1d76d5e178f`; `/v1/health` subsequently returned `0.2.0` with D1 status `ok`.
+- `0001_initial_schema.sql` and `0002_idempotency_and_mutation_guards.sql` were applied remotely; Wrangler then reported no pending migrations. Both also replayed locally from empty state.
+- The fixture-only live acceptance completed one registered temporary device through signed 1×1 PNG upload, strict verification, catalog mutation, bootstrap/change replay, signed byte-identical download, and device revocation.
+- The Worker has only the dedicated R2 account/access/secret signing values required for direct capabilities. The signer token is restricted to object read/write on `framebase-blobs-dev`; no client receives that credential.
+- Post-release checks found no Worker or R2 custom domains, no browser CORS header, `401` for an unauthenticated protected route, and no current-period billed cost in the reported R2/Workers usage rows.
+- Local Phase 2 contract tests, native regression gates, and the source audit establish the negative identity/logging cases and preserve the untouched local library. Enrollment remains a development-only shared-secret protocol until Phase 3 replaces it with keypair proof of possession.
 
 ## References
 

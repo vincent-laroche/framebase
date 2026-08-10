@@ -40,7 +40,7 @@ The repository now contains:
 
 ## Active blocker
 
-None for Phase 1. Phase 2 is locally implemented and verified, but is not yet shipped to the development Worker: the currently deployed Worker does not contain the new migration-backed contract. The remaining gate is an explicitly approved live operation: add narrowly scoped R2 signing credentials as Worker secrets, apply the two remote D1 migrations, deploy `framebase-api-dev`, run the fixture-only acceptance script, verify private access/log redaction/cost, and revoke the temporary device. No personal photo library data has touched any cloud resource. The macOS app correctly remains cloud-free; `FramebaseAPIClient` and `FramebaseSync` are Phase 3 work.
+None for Phases 1 and 2. Phase 2 is complete on the isolated development environment; no personal photo library data has touched any cloud resource. The macOS app remains cloud-free, and `FramebaseAPIClient` and `FramebaseSync` remain Phase 3 work.
 
 ## Next
 
@@ -51,13 +51,13 @@ Phase 1 follow-ups, before further Phase 1 polish:
 3. Close the coverage gaps the real-use pass exposed. Fixture-backed UI tests do not reproduce the cell-lifecycle feedback loop or the thumbnail overflow, because synthetic images decode too fast and stay smaller than a cell. Catching either needs browser instrumentation or a real-photo performance fixture.
 4. Add only narrowly justified polish or diagnostics based on that real-use pass.
 
-Phase 2 cloud foundation, remaining:
+Phase 3 entry work:
 
-5. Obtain explicit approval for the live Phase 2 operation specified in `Cloud/PHASE_2_OPERATIONS.md`: set new Worker signing secrets, apply remote migrations, deploy the Worker, and run the live fixture-only acceptance proof. This must use a narrow deploy token if available and stay under the US$5/month development ceiling.
-6. On approval, record the remote migration state before/after, the deployment version, private R2 check, safe sampled-log review, cost snapshot, and acceptance result in this file. Do not claim Phase 2 complete until every exit item in `docs/phases/PHASE_2_CLOUD_FOUNDATION.md` is evidenced.
-7. After Phase 2 exits, start Phase 3 with `FramebaseAPIClient`, `FramebaseSync`, Secure-Enclave/keypair enrollment, and a strictly local-first migration manifest. Preserve the working local library throughout every cloud migration step.
+5. Create the Phase 3 plan before implementation: `FramebaseAPIClient`, `FramebaseSync`, Secure-Enclave/keypair enrollment, a strictly local-first migration manifest, and the client-side conflict/outbox model. Preserve the working local library throughout every cloud migration step.
 
 ## Session log
+
+- 2026-08-09 — Codex primary agent — Completed the explicitly approved Phase 2 development release. Created a permanent R2 S3 signer with only object read/write access to `framebase-blobs-dev`, then stored its account/access/secret values only as Worker secrets. Applied `0001_initial_schema.sql` and `0002_idempotency_and_mutation_guards.sql` to `framebase-catalog-dev`, deployed `framebase-api-dev` version `25ab4e1f-463b-4c4e-8311-e1d76d5e178f`, and verified `/v1/health` reports API `0.2.0` with D1 `ok`. The fixture-only live acceptance succeeded end-to-end with a harmless 1×1 PNG: temporary-device enrollment, signed upload, server verification, catalog create, bootstrap/change replay, byte-identical signed download, then device revocation. Post-release checks: no pending migrations; the three R2 signing Worker secret names are present; no Worker or R2 custom domains; protected capabilities return `401` without auth; no browser CORS header; current-period R2/Workers billed-cost rows are all US$0. The Worker’s only sampled request log contains request ID, method, and status; no personal media, production/DNS/public-access change, or local-library migration occurred. — Next: prepare the focused Phase 3 local-first sync/client plan, including Secure-Enclave/keypair enrollment to replace the development enrollment secret.
 
 - 2026-08-09 — Codex primary agent — Read-only live preflight after local Phase 2 completion: the current `framebase-api-dev` Worker health endpoint is reachable and still reports version `0.1.0`; its two new D1 migrations are both pending remotely. The existing `CLOUDFLARE_FRAMEBASE_DEV_DEPLOY_TOKEN` successfully reads remote D1 migration state, so the release can avoid the master account token. Verified no Worker custom domains and no R2 custom domains are attached to the Framebase development resources. No Cloudflare state was modified. — Next: receive explicit approval to create/store R2 signing secrets, apply migrations, deploy, and run the fixture acceptance check.
 

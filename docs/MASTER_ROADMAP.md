@@ -545,9 +545,9 @@ Permanent purge is never included in a general write scope.
 
 ## Phase 2 — Cloud contract and safety spine
 
-**Status:** In progress. The isolated development Worker, D1 database, and
-private R2 bucket exist; the Phase 2 fixture-contract and safety exit gates are
-still open. Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
+**Status:** Implemented on the isolated development environment (2026-08-09).
+The fixture-contract and safety exit evidence is recorded in `PROJECT.md`.
+Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 **User-visible outcome:** A development cloud exists behind the app, but no personal library is migrated yet. Framebase can authenticate a registered development client, upload and retrieve fixtures privately, and synchronize fixture catalog changes through a versioned API.
 
