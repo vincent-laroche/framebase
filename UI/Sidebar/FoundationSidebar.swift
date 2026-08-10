@@ -515,7 +515,8 @@ struct FoundationSidebar: NSViewRepresentable {
             id folderID: FolderID,
             foldersByID: [FolderID: Folder],
             childrenByParent: [FolderID: [FolderID]],
-            ancestors: Set<FolderID> = []
+            ancestors: Set<FolderID> = [],
+            depth: Int = 0
         ) -> SidebarNode? {
             guard !ancestors.contains(folderID),
                   let folder = foldersByID[folderID],
@@ -524,8 +525,9 @@ struct FoundationSidebar: NSViewRepresentable {
             let node = SidebarNode(
                 id: .folder(folderID),
                 title: folder.name.rawValue,
-                symbolName: "folder",
-                navigationTarget: .folder(folderID)
+                symbolName: depth == 0 ? "folder.fill" : "folder",
+                navigationTarget: .folder(folderID),
+                folderDepth: depth
             )
             let nextAncestors = ancestors.union([folderID])
             node.children = (childrenByParent[folderID] ?? []).compactMap {
@@ -533,7 +535,8 @@ struct FoundationSidebar: NSViewRepresentable {
                     id: $0,
                     foldersByID: foldersByID,
                     childrenByParent: childrenByParent,
-                    ancestors: nextAncestors
+                    ancestors: nextAncestors,
+                    depth: depth + 1
                 )
             }
             return node
@@ -742,14 +745,21 @@ private final class SidebarOutlineView: NSOutlineView {
 
 @MainActor
 private final class SidebarCellView: NSTableCellView {
+    private let hierarchyMarker = NSBox()
     private let symbolView = NSImageView()
     private let titleField = SidebarTitleField()
+    private var hierarchyMarkerWidth: NSLayoutConstraint?
 
     var node: SidebarNode?
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
         self.identifier = identifier
+
+        hierarchyMarker.translatesAutoresizingMaskIntoConstraints = false
+        hierarchyMarker.boxType = .custom
+        hierarchyMarker.borderWidth = 0
+        hierarchyMarker.cornerRadius = 1
 
         symbolView.translatesAutoresizingMaskIntoConstraints = false
         symbolView.imageScaling = .scaleProportionallyDown
@@ -768,11 +778,17 @@ private final class SidebarCellView: NSTableCellView {
 
         imageView = symbolView
         textField = titleField
+        addSubview(hierarchyMarker)
         addSubview(symbolView)
         addSubview(titleField)
 
+        hierarchyMarkerWidth = hierarchyMarker.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            symbolView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            hierarchyMarker.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hierarchyMarker.centerYAnchor.constraint(equalTo: centerYAnchor),
+            hierarchyMarker.heightAnchor.constraint(equalToConstant: 14),
+            hierarchyMarkerWidth!,
+            symbolView.leadingAnchor.constraint(equalTo: hierarchyMarker.trailingAnchor, constant: 2),
             symbolView.centerYAnchor.constraint(equalTo: centerYAnchor),
             symbolView.widthAnchor.constraint(equalToConstant: 16),
             symbolView.heightAnchor.constraint(equalToConstant: 16),
@@ -797,8 +813,22 @@ private final class SidebarCellView: NSTableCellView {
         titleField.setAccessibilityLabel(node.title)
         titleField.setAccessibilityIdentifier("sidebar.item.\(node.title)")
 
+        let isFolder = node.folderDepth != nil
+        let isTopLevelFolder = node.folderDepth == 0
+        hierarchyMarker.isHidden = !isFolder
+        hierarchyMarkerWidth?.constant = isFolder ? 2 : 0
+        hierarchyMarker.fillColor = isTopLevelFolder ? .quaternaryLabelColor : .separatorColor
+        titleField.font = group
+            ? .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+            : isTopLevelFolder
+                ? .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+                : .systemFont(ofSize: NSFont.systemFontSize)
         symbolView.image = node.symbolName.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: node.title) }
-        symbolView.contentTintColor = node.isPlaceholder ? .tertiaryLabelColor : .secondaryLabelColor
+        symbolView.contentTintColor = node.isPlaceholder
+            ? .tertiaryLabelColor
+            : isTopLevelFolder
+                ? .labelColor
+                : .secondaryLabelColor
         symbolView.isHidden = group || node.symbolName == nil
     }
 
@@ -845,6 +875,7 @@ private final class SidebarNode: NSObject {
     let symbolName: String?
     let navigationTarget: NavigationTarget?
     let isGroup: Bool
+    let folderDepth: Int?
     var children: [SidebarNode] = []
 
     init(
@@ -852,13 +883,15 @@ private final class SidebarNode: NSObject {
         title: String,
         symbolName: String? = nil,
         navigationTarget: NavigationTarget? = nil,
-        isGroup: Bool = false
+        isGroup: Bool = false,
+        folderDepth: Int? = nil
     ) {
         self.id = id
         self.title = title
         self.symbolName = symbolName
         self.navigationTarget = navigationTarget
         self.isGroup = isGroup
+        self.folderDepth = folderDepth
     }
 
     var isPlaceholder: Bool {

@@ -285,6 +285,13 @@ final class FramebaseUITests: XCTestCase {
         cell.click()
         XCTAssertTrue(app.staticTexts["File"].waitForExistence(timeout: 10))
 
+        let folderLocation = app.descendants(matching: .any)["inspector.location.folder"]
+        let albumLocation = app.descendants(matching: .any)["inspector.location.albums"]
+        XCTAssertTrue(folderLocation.waitForExistence(timeout: 10))
+        XCTAssertTrue(albumLocation.waitForExistence(timeout: 10))
+        XCTAssertTrue(folderLocation.value as? String == "Folder: Inbox", folderLocation.debugDescription)
+        XCTAssertTrue(albumLocation.value as? String == "Albums: New Album", albumLocation.debugDescription)
+
         let tagField = app.textFields["inspector.tagName"]
         XCTAssertTrue(tagField.waitForExistence(timeout: 10))
         tagField.click()
@@ -292,7 +299,7 @@ final class FramebaseUITests: XCTestCase {
         let addTagButton = app.buttons["inspector.addTag"]
         XCTAssertTrue(addTagButton.waitForExistence(timeout: 10))
         XCTAssertTrue(addTagButton.isEnabled)
-        addTagButton.click()
+        tagField.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(waitForEmptyValue(of: tagField, timeout: 10))
     }
 

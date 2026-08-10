@@ -136,6 +136,7 @@ final class LibraryWindowModel {
     var selectedPhotoAssessments: [PhotoAssessment] = []
     var selectedAssessmentReviews: [UUID: [AssessmentReview]] = [:]
     var selectedBeforeAfterRelationships: [BeforeAfterRelationship] = []
+    var selectedAlbumsByAsset: [AssetID: [Album]] = [:]
     var isAnalyzingSelection = false
     var inspectorSelectionIsLimited = false
     var inspectorPreviewState: AssetThumbnailState?
@@ -330,6 +331,45 @@ final class LibraryWindowModel {
         }
     }
 
+    var navigationLocationLabel: String {
+        switch navigationTarget {
+        case let .folder(folderID):
+            return "Folder · \(folderPath(for: folderID))"
+        case let .album(albumID):
+            let name = albums.first { $0.id == albumID }?.name ?? "Unavailable"
+            return "Album · \(name)"
+        case .allAssets:
+            return "Library · All Assets"
+        case .inbox:
+            return "Library · Inbox"
+        case .favorites:
+            return "Library · Favorites"
+        case .trash:
+            return "Library · Trash"
+        }
+    }
+
+    func folderPath(for folderID: FolderID) -> String {
+        guard let snapshot = folderTreeSnapshot else { return "Unavailable" }
+        let foldersByID = Dictionary(uniqueKeysWithValues: snapshot.folders.map { ($0.id, $0) })
+        var names: [String] = []
+        var currentID: FolderID? = folderID
+        var visited: Set<FolderID> = []
+
+        while let current = currentID,
+              visited.insert(current).inserted,
+              let folder = foldersByID[current] {
+            names.append(folder.name.rawValue)
+            currentID = folder.parentFolderID
+        }
+
+        return names.isEmpty ? "Unavailable" : names.reversed().joined(separator: " › ")
+    }
+
+    func albums(containing assetID: AssetID) -> [Album] {
+        selectedAlbumsByAsset[assetID, default: []]
+    }
+
     func selectAllVisibleAssets() {
         selectedAssetIDs = Set(orderedVisibleAssetIDs)
         selectionAnchorID = orderedVisibleAssetIDs.first
@@ -453,6 +493,7 @@ final class LibraryWindowModel {
         do {
             try await repository.moveAssets(assetIDs, to: folderID)
             try await container.queueCloudAssetMutation(.move(to: folderID), for: assetIDs)
+            await refreshInspectorNow()
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -582,6 +623,7 @@ final class LibraryWindowModel {
                 try await container.queueCloudAlbumMutation(.add(albumID: album.id, assetIDs: selectedAssetIDs))
             }
             navigationTarget = .album(album.id)
+            await refreshInspectorNow()
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -615,6 +657,7 @@ final class LibraryWindowModel {
         do {
             try await repository.addAssets(selectedAssetIDs, to: albumID)
             try await container.queueCloudAlbumMutation(.add(albumID: albumID, assetIDs: selectedAssetIDs))
+            await refreshInspectorNow()
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -989,6 +1032,7 @@ final class LibraryWindowModel {
         selectedPhotoAssessments = []
         selectedAssessmentReviews = [:]
         selectedBeforeAfterRelationships = []
+        selectedAlbumsByAsset = [:]
         selectedTags = []
         selectedDuplicateCandidate = nil
         selectedTrashReceipts = []
@@ -1256,6 +1300,11 @@ final class LibraryWindowModel {
                     .sorted { $0.name.rawValue < $1.name.rawValue }
             } else {
                 selectedTags = []
+            }
+            if let albumRepository = container.albumRepository {
+                selectedAlbumsByAsset = try await albumRepository.albums(containing: selection)
+            } else {
+                selectedAlbumsByAsset = [:]
             }
             if assets.count == 1, let asset = assets.first {
                 requestInspectorPreview(for: asset)

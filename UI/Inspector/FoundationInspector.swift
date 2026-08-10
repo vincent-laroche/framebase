@@ -59,7 +59,6 @@ struct FoundationInspector: View {
                     .onSubmit(saveProposedDisplayName)
                 Button("Save Display Name", action: saveProposedDisplayName)
                     .disabled(proposedDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || proposedDisplayName == asset.displayName)
-                LabeledContent("Folder", value: folderName(asset.parentFolderID))
                 LabeledContent("Dimensions", value: dimensions(asset))
                 LabeledContent(
                     "Size",
@@ -74,6 +73,8 @@ struct FoundationInspector: View {
                     }
                 }
             }
+
+            assetLocation(asset)
 
             localAnalysis
 
@@ -148,7 +149,7 @@ struct FoundationInspector: View {
                 )
                 LabeledContent(
                     "Folder",
-                    value: folders.count == 1 ? folderName(folders.first!) : "Mixed"
+                    value: folders.count == 1 ? model.folderPath(for: folders.first!) : "Mixed"
                 )
                 LabeledContent("Favorites", value: assets.filter(\.favorite).count.formatted())
                 LabeledContent("Ratings", value: ratings.isEmpty ? "None" : ratings)
@@ -212,6 +213,43 @@ struct FoundationInspector: View {
     private func previewPlaceholder(_ symbol: String, _ label: String) -> some View {
         Label(label, systemImage: symbol)
             .foregroundStyle(.secondary)
+    }
+
+    private func assetLocation(_ asset: Asset) -> some View {
+        let albumNames = model.albums(containing: asset.id).map(\.name)
+        return Section("Location") {
+            locationRow(
+                title: "Folder",
+                value: model.folderPath(for: asset.parentFolderID),
+                symbol: "folder",
+                identifier: "inspector.location.folder"
+            )
+            locationRow(
+                title: "Albums",
+                value: albumNames.isEmpty ? "Not in an album" : albumNames.joined(separator: " · "),
+                symbol: "rectangle.stack",
+                identifier: "inspector.location.albums"
+            )
+            locationRow(
+                title: "Open view",
+                value: model.navigationLocationLabel,
+                symbol: "eye",
+                identifier: "inspector.location.view"
+            )
+        }
+    }
+
+    private func locationRow(title: String, value: String, symbol: String, identifier: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title)
+            Spacer(minLength: 8)
+            Label(value, systemImage: symbol)
+                .multilineTextAlignment(.trailing)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(identifier)
+        .accessibilityLabel("\(title): \(value)")
     }
 
     @ViewBuilder
@@ -525,11 +563,6 @@ struct FoundationInspector: View {
                 Task { await model.setRating(rating) }
             }
         )
-    }
-
-    private func folderName(_ folderID: FolderID) -> String {
-        model.folderTreeSnapshot?.folders.first(where: { $0.id == folderID })?.name.rawValue
-            ?? "Unavailable"
     }
 
     private func dimensions(_ asset: Asset) -> String {

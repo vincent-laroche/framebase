@@ -34,6 +34,7 @@ public protocol FolderRepository: Sendable {
 
 public protocol AlbumRepository: Sendable {
     func albums() async throws -> [Album]
+    func albums(containing assetIDs: Set<AssetID>) async throws -> [AssetID: [Album]]
     func observeAlbums() -> AsyncThrowingStream<[Album], any Error>
     func addAssets(_ assetIDs: Set<AssetID>, to albumID: AlbumID) async throws
     func removeAssets(_ assetIDs: Set<AssetID>, from albumID: AlbumID) async throws

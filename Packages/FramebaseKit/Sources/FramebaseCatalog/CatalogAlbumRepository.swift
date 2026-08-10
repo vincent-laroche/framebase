@@ -18,6 +18,37 @@ public struct CatalogAlbumRepository: AlbumRepository, Sendable {
         }
     }
 
+    public func albums(containing assetIDs: Set<AssetID>) async throws -> [AssetID: [Album]] {
+        guard !assetIDs.isEmpty else { return [:] }
+        let identifiers = assetIDs.map(\.description).sorted()
+        let placeholders = identifiers.map { _ in "?" }.joined(separator: ", ")
+
+        return try await databasePool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT album_assets.asset_id, albums.*
+                    FROM album_assets
+                    JOIN albums ON albums.id = album_assets.album_id
+                    WHERE album_assets.asset_id IN (\(placeholders))
+                    ORDER BY album_assets.asset_id, albums.sort_order, albums.name COLLATE NOCASE, albums.id
+                    """,
+                arguments: StatementArguments(identifiers)
+            )
+
+            var result: [AssetID: [Album]] = [:]
+            for row in rows {
+                let identifier: String = row["asset_id"]
+                guard let uuid = UUID(uuidString: identifier) else {
+                    throw CatalogError.invalidPersistedIdentifier(identifier)
+                }
+                let assetID = AssetID(rawValue: uuid)
+                result[assetID, default: []].append(try AlbumRecord(row: row).domainAlbum())
+            }
+            return result
+        }
+    }
+
     public func observeAlbums() -> AsyncThrowingStream<[Album], any Error> {
         let observation = ValueObservation.tracking { db in
             try AlbumRecord.fetchAll(
