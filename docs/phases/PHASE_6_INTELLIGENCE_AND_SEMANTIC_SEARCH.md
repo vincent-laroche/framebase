@@ -38,6 +38,7 @@ Vincent explicitly authorized the local-only Phase 6 foundation on 2026-08-10 be
 | Packages/FramebaseKit/Sources/FramebaseMedia/IntelligenceDerivativeProvider.swift | Fixed-size, checksum-addressed analysis derivative. |
 | Packages/FramebaseKit/Sources/FramebaseMedia/VisionIntelligenceService.swift | Local Vision OCR, barcode, document, and face-region adapter. |
 | App/LibraryWindowModel.swift and UI/Inspector/FoundationInspector.swift | Explicit Analyze action and provenance display. |
+| docs/PHASE_6_CLOUD_INTELLIGENCE_OPERATIONS.md | Development-only resource, privacy, cost, and rollback approval package. |
 | Cloud/apps/api and Cloud/contracts | Deferred cloud contract after the separate resource approval. |
 
 ---
@@ -227,11 +228,11 @@ git commit -m "Add opt-in local intelligence review UI"
 - Create: docs/PHASE_6_CLOUD_INTELLIGENCE_OPERATIONS.md
 - Modify: docs/phases/PHASE_6_INTELLIGENCE_AND_SEMANTIC_SEARCH.md
 
-- [ ] **Step 1: Specify the exact approval matrix**
+- [x] **Step 1: Specify the exact approval matrix**
 
 Document provider/model, derivative dimensions/format, payload, retention, prompt/schema version, AI Gateway logging disablement, rate/retry policy, monthly cap, Vectorize namespace, D1 migrations, Worker scopes, observability, rollback, and synthetic-fixture proof.
 
-- [ ] **Step 2: Verify no cloud intelligence is wired prematurely**
+- [x] **Step 2: Verify no cloud intelligence is wired prematurely**
 
 Run: rg -n 'AIGateway|Vectorize|Workers AI|embedding|semantic' App Packages Cloud/apps/api
 
