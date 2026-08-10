@@ -5,7 +5,7 @@ import type { AppEnv } from '../types.js';
 
 export const mutationsRouter = new Hono<AppEnv>();
 
-type MutationOperationType =
+export type MutationOperationType =
   | 'create_folder'
   | 'create_album'
   | 'add_assets_to_album'
@@ -35,14 +35,14 @@ type MutationOperationType =
   | 'reorder_album'
   | 'delete_album';
 
-interface MutationOperation {
+export interface MutationOperation {
   type: MutationOperationType;
   targetId: string;
   baseRevision?: number;
   payload: Record<string, unknown>;
 }
 
-interface MutationRequest {
+export interface MutationRequest {
   clientMutationId?: string;
   operations?: MutationOperation[];
 }
@@ -662,46 +662,57 @@ async function prepareOperation(
   return { code: 'INVALID_MUTATION', message: 'Mutation type is unsupported' };
 }
 
-mutationsRouter.post('/mutations', requireAuth(), async (c) => {
-  let body: MutationRequest;
-  try {
-    body = await c.req.json();
-  } catch {
-    return apiError(c, 400, 'INVALID_REQUEST', 'Request body must be JSON');
+export type MutationBatchResult =
+  | { ok: true; body: Record<string, unknown> }
+  | { ok: false; status: 400 | 403 | 409 | 422; code: string; message: string };
+
+/**
+ * The only Worker-side catalog mutation executor. HTTP and later agent
+ * adapters call this shared boundary so proposal/apply paths cannot fork
+ * transaction, idempotency, or audit behavior.
+ */
+export async function applyMutationBatch(
+  env: AppEnv['Bindings'],
+  actorId: string,
+  grantedScopes: string[],
+  mutationId: string,
+  operations: MutationOperation[] | undefined
+): Promise<MutationBatchResult> {
+  if (!ID.test(mutationId)) {
+    return { ok: false, status: 400, code: 'MISSING_IDEMPOTENCY_KEY', message: 'A valid Idempotency-Key is required' };
+  }
+  if (!Array.isArray(operations) || operations.length === 0 || operations.length > 25) {
+    return { ok: false, status: 400, code: 'INVALID_MUTATION', message: 'operations must contain between one and twenty-five entries' };
   }
 
-  const mutationId = c.req.header('Idempotency-Key') ?? body.clientMutationId;
-  if (!mutationId || !ID.test(mutationId)) return apiError(c, 400, 'MISSING_IDEMPOTENCY_KEY', 'A valid Idempotency-Key is required');
-  if (!Array.isArray(body.operations) || body.operations.length === 0 || body.operations.length > 25) {
-    return apiError(c, 400, 'INVALID_MUTATION', 'operations must contain between one and twenty-five entries');
-  }
-
-  const actorId = c.get('deviceId');
-  const requestFingerprint = await fingerprint({ operations: body.operations });
-  const existing = await c.env.DB.prepare(
+  const requestFingerprint = await fingerprint({ operations });
+  const existing = await env.DB.prepare(
     'SELECT actor_id, request_fingerprint, response_code, response_body FROM idempotency_keys WHERE client_mutation_id = ?'
   )
     .bind(mutationId)
     .first<{ actor_id: string; request_fingerprint: string; response_code: number; response_body: string }>();
   if (existing) {
     if (existing.actor_id !== actorId || existing.request_fingerprint !== requestFingerprint) {
-      return apiError(c, 409, 'IDEMPOTENCY_KEY_REUSED', 'Idempotency key was used for a different request');
+      return { ok: false, status: 409, code: 'IDEMPOTENCY_KEY_REUSED', message: 'Idempotency key was used for a different request' };
     }
-    return c.json(JSON.parse(existing.response_body), existing.response_code as 200);
+    return { ok: true, body: JSON.parse(existing.response_body) };
   }
 
-  const grantedScopes = c.get('scopes') ?? [];
   const missingScopes = new Set<string>();
-  for (const operation of body.operations) {
+  for (const operation of operations) {
     const required = REQUIRED_SCOPE_BY_OPERATION[operation.type];
     if (!required || !grantedScopes.includes(required)) missingScopes.add(required ?? operation.type);
   }
-  if (missingScopes.size > 0) return apiError(c, 403, 'FORBIDDEN', `Missing required scope(s): ${[...missingScopes].join(', ')}`);
+  if (missingScopes.size > 0) {
+    return { ok: false, status: 403, code: 'FORBIDDEN', message: `Missing required scope(s): ${[...missingScopes].join(', ')}` };
+  }
 
   const prepared: PreparedOperation[] = [];
-  for (const [index, operation] of body.operations.entries()) {
-    const result = await prepareOperation(c.env, operation, index, mutationId);
-    if ('code' in result) return apiError(c, result.code === 'STALE_REVISION' ? 409 : 422, result.code, result.message);
+  for (const [index, operation] of operations.entries()) {
+    const result = await prepareOperation(env, operation, index, mutationId);
+    if ('code' in result) {
+      return { ok: false, status: result.code === 'STALE_REVISION' ? 409 : 422, code: result.code, message: result.message };
+    }
     prepared.push(result);
   }
 
@@ -718,41 +729,58 @@ mutationsRouter.post('/mutations', requireAuth(), async (c) => {
   };
 
   const statements = [
-    ...prepared.map((entry) => c.env.DB.prepare(entry.guardSql).bind(...entry.guardParams)),
+    ...prepared.map((entry) => env.DB.prepare(entry.guardSql).bind(...entry.guardParams)),
     ...prepared.flatMap((entry) => [
-      ...entry.mutationStatements.map((statement) => c.env.DB.prepare(statement.sql).bind(...statement.params)),
-      c.env.DB.prepare(
+      ...entry.mutationStatements.map((statement) => env.DB.prepare(statement.sql).bind(...statement.params)),
+      env.DB.prepare(
         `INSERT INTO change_events (entity_type, entity_id, operation, payload, actor_id, client_mutation_id)
          VALUES (?, ?, ?, ?, ?, ?)`
       ).bind(entry.entityType, entry.operation.targetId, entry.operation.type, JSON.stringify(entry.afterState), actorId, `${mutationId}:${entry.index}`),
-      c.env.DB.prepare(
+      env.DB.prepare(
         `INSERT INTO audit_events (client_mutation_id, actor_id, action, target_type, target_id, after_state)
          VALUES (?, ?, ?, ?, ?, ?)`
       ).bind(mutationId, actorId, entry.operation.type, entry.entityType, entry.operation.targetId, JSON.stringify(entry.afterState))
     ]),
-    c.env.DB.prepare(
+    env.DB.prepare(
       `INSERT INTO idempotency_keys (client_mutation_id, actor_id, request_fingerprint, response_code, response_body)
        VALUES (?, ?, ?, 200, ?)`
     ).bind(mutationId, actorId, requestFingerprint, JSON.stringify(responseBody)),
-    ...prepared.map((entry) => c.env.DB.prepare('DELETE FROM mutation_guards WHERE request_id = ?').bind(`${mutationId}:${entry.index}`))
+    ...prepared.map((entry) => env.DB.prepare('DELETE FROM mutation_guards WHERE request_id = ?').bind(`${mutationId}:${entry.index}`))
   ];
 
   try {
-    await c.env.DB.batch(statements);
+    await env.DB.batch(statements);
   } catch {
-    const racedReceipt = await c.env.DB.prepare(
+    const racedReceipt = await env.DB.prepare(
       'SELECT actor_id, request_fingerprint, response_code, response_body FROM idempotency_keys WHERE client_mutation_id = ?'
     )
       .bind(mutationId)
       .first<{ actor_id: string; request_fingerprint: string; response_code: number; response_body: string }>();
     if (racedReceipt) {
       if (racedReceipt.actor_id === actorId && racedReceipt.request_fingerprint === requestFingerprint) {
-        return c.json(JSON.parse(racedReceipt.response_body), racedReceipt.response_code as 200);
+        return { ok: true, body: JSON.parse(racedReceipt.response_body) };
       }
-      return apiError(c, 409, 'IDEMPOTENCY_KEY_REUSED', 'Idempotency key was used for a different request');
+      return { ok: false, status: 409, code: 'IDEMPOTENCY_KEY_REUSED', message: 'Idempotency key was used for a different request' };
     }
-    return apiError(c, 409, 'STALE_REVISION', 'One or more target entities changed before the mutation was applied');
+    return { ok: false, status: 409, code: 'STALE_REVISION', message: 'One or more target entities changed before the mutation was applied' };
   }
 
-  return c.json(responseBody);
+  return { ok: true, body: responseBody };
+}
+
+mutationsRouter.post('/mutations', requireAuth(), async (c) => {
+  let body: MutationRequest;
+  try {
+    body = await c.req.json();
+  } catch {
+    return apiError(c, 400, 'INVALID_REQUEST', 'Request body must be JSON');
+  }
+
+  const mutationId = c.req.header('Idempotency-Key') ?? body.clientMutationId;
+  if (!mutationId) return apiError(c, 400, 'MISSING_IDEMPOTENCY_KEY', 'A valid Idempotency-Key is required');
+  const actorId = c.get('deviceId');
+  if (!actorId) return apiError(c, 401, 'UNAUTHORIZED', 'Authenticated device identity is unavailable');
+  const result = await applyMutationBatch(c.env, actorId, c.get('scopes') ?? [], mutationId, body.operations);
+  if (!result.ok) return apiError(c, result.status, result.code, result.message);
+  return c.json(result.body);
 });

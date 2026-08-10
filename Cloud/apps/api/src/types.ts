@@ -14,6 +14,8 @@ export interface Bindings {
 export interface Variables {
   deviceId?: string;
   scopes?: string[];
+  agentId?: string;
+  agentScopes?: string[];
   requestId: string;
 }
 

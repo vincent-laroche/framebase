@@ -19,7 +19,13 @@ const DOCUMENTED_ROUTE_METHODS: Record<string, string[]> = {
   '/v1/blobs/{id}/download': ['get'],
   '/v1/blobs/{id}/verification-download': ['get'],
   '/v1/assets/{id}/variants/{variant}': ['get'],
-  '/v1/mutations': ['post']
+  '/v1/mutations': ['post'],
+  '/v1/agents': ['post'],
+  '/v1/agents/{agentId}/revoke': ['post'],
+  '/v1/agent-operations/tag-proposals': ['post'],
+  '/v1/agent-operations/{operationId}/approve': ['post'],
+  '/v1/agent-operations/{operationId}/apply': ['post'],
+  '/v1/agent-operations/{operationId}': ['get']
 };
 
 const APPROVED_REQUIRED_FIELDS: Record<string, string[]> = {
@@ -34,7 +40,7 @@ const APPROVED_REQUIRED_FIELDS: Record<string, string[]> = {
 describe('versioned API contract', () => {
   it('declares the Phase 4 organization contract and shared error envelope', () => {
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.2.0');
+    expect(contract.info.version).toBe('1.3.0');
     expect(Object.keys(contract.paths).sort()).toEqual(Object.keys(DOCUMENTED_ROUTE_METHODS).sort());
     for (const [path, methods] of Object.entries(DOCUMENTED_ROUTE_METHODS)) {
       expect(Object.keys(contract.paths[path]).sort()).toEqual(methods);
@@ -56,6 +62,9 @@ describe('versioned API contract', () => {
     expect(schemas.AgentOperationRequest.required).toEqual(['id', 'operation', 'targetAssetIds', 'catalogRevision']);
     expect(schemas.AgentApprovalToken.required).toEqual(['id', 'operationId', 'targetAssetIds', 'catalogRevision', 'expiresAt']);
     expect(schemas.AgentIdentity.properties.scopes.items.$ref).toBe('#/components/schemas/AgentScope');
+    expect(schemas.AgentTagProposalRequest.additionalProperties).toBe(false);
+    expect(schemas.AgentOperation.description).toContain('never creates a tag');
+    expect(contract.components.securitySchemes.agentCredential.name).toBe('Authorization');
   });
 
   it('rejects undocumented routes and required request fields', () => {

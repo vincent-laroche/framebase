@@ -33,7 +33,13 @@ const PROTECTED_REQUESTS: Array<[string, RequestInit]> = [
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId: 'x', deviceName: 'x', publicKey: 'x' })
     }
-  ]
+  ],
+  ['/v1/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'x', scopes: ['library.read'] }) }],
+  ['/v1/agents/agent-1/revoke', { method: 'POST' }],
+  ['/v1/agent-operations/tag-proposals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tagId: 'tag-1', targetAssetIds: ['asset-1'], catalogRevision: 0 }) }],
+  ['/v1/agent-operations/operation-1/approve', { method: 'POST' }],
+  ['/v1/agent-operations/operation-1/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approvalToken: 'x'.repeat(32) }) }],
+  ['/v1/agent-operations/operation-1', { method: 'GET' }]
 ];
 
 describe('negative auth', () => {

@@ -48,7 +48,9 @@
 
 ## Task 4: Add remote HTTP/MCP adapters after identity approval
 
-- [ ] Map approved OpenAPI operations to scope-enforced Worker handlers and operation records.
+**Current source-only implementation (2026-08-10):** migration `0007_agent_operations.sql` and the `agents` Worker route implement the first narrow remote adapter without deploying it. A trusted device can mint a one-time returned, SHA-256-hashed delegated credential whose scopes are a subset of its own; only that device can revoke it. An active agent with `assets.metadata.write` can propose adding an existing tag to up to 500 active assets at an exact catalog revision. The owner device issues a 15-minute opaque approval only if the full target/tag/membership snapshot is unchanged. The same shared idempotent mutation executor used by `/v1/mutations` then adds only previously missing memberships and preserves any pre-existing membership. Every identity/proposal/approval/apply/expiry/stale event is attributed. No migration has been applied, identity created, endpoint deployed, MCP server hosted, cloud credential emitted, or personal media touched.
+
+- [ ] Map the remaining approved OpenAPI operations to scope-enforced Worker handlers and operation records. The initial `addTags` proposal/apply route is source-complete and terminal-tested; it is not deployed.
 - [x] Create a separate scoped, local-catalog agent identity/revocation model without exposing infrastructure credentials. Remote identity authentication remains deferred to its separately approved adapter.
 - [ ] Implement MCP tools as thin wrappers; do not duplicate workflow or mutation logic.
 - [ ] Prove scope denial, revocation, proposal expiry, audit attribution, and CLI/MCP parity.
