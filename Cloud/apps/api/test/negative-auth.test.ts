@@ -6,6 +6,8 @@ import { createTestEnv } from './testEnv.js';
 
 const PROTECTED_REQUESTS: Array<[string, RequestInit]> = [
   ['/v1/changes', { method: 'GET' }],
+  ['/v1/catalog/bootstrap', { method: 'GET' }],
+  ['/v1/capabilities', { method: 'GET' }],
   [
     '/v1/mutations',
     {
@@ -67,5 +69,29 @@ describe('negative auth', () => {
       env
     );
     expect(res.status).toBe(401);
+  });
+
+  it('rejects an expired token and a revoked enrolled device', async () => {
+    const expired = await Jwt.sign(
+      { sub: 'expired-device', scopes: ['library.read'], iat: 0, exp: 1 },
+      env.JWT_SECRET as string,
+      'HS256'
+    );
+    expect((await app.request('/v1/changes', { headers: { Authorization: `Bearer ${expired}` } }, env)).status).toBe(401);
+
+    await env.DB.prepare(
+      "INSERT INTO devices (id, device_name, public_key, scopes, status) VALUES (?, ?, ?, ?, 'revoked')"
+    ).bind('revoked-device', 'revoked', 'key', JSON.stringify(['library.read'])).run();
+    const revoked = await Jwt.sign(
+      { sub: 'revoked-device', scopes: ['library.read'], iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 },
+      env.JWT_SECRET as string,
+      'HS256'
+    );
+    expect((await app.request('/v1/changes', { headers: { Authorization: `Bearer ${revoked}` } }, env)).status).toBe(401);
+  });
+
+  it('does not emit permissive browser CORS headers', async () => {
+    const response = await app.request('/v1/health', { headers: { Origin: 'https://untrusted.example' } }, env);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
 });

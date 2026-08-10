@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Framebase application icon</title>
+  <desc>Layered visual frames over a deep blue field, with a warm focal point.</desc>
+  <defs>
+    <linearGradient id="background" x1="122" y1="68" x2="887" y2="956" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#243D65"/>
+      <stop offset="0.52" stop-color="#132744"/>
+      <stop offset="1" stop-color="#091522"/>
+    </linearGradient>
+    <linearGradient id="backFrame" x1="262" y1="190" x2="775" y2="784" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6FB8FF"/>
+      <stop offset="1" stop-color="#3F68CE"/>
+    </linearGradient>
+    <linearGradient id="frontFrame" x1="291" y1="258" x2="735" y2="768" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7FBFF"/>
+      <stop offset="1" stop-color="#BDD9FF"/>
+    </linearGradient>
+    <linearGradient id="imageSurface" x1="331" y1="296" x2="711" y2="727" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#294B76"/>
+      <stop offset="1" stop-color="#142B4A"/>
+    </linearGradient>
+    <linearGradient id="mountain" x1="358" y1="652" x2="697" y2="472" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7DCBFF"/>
+      <stop offset="1" stop-color="#A5E0FF"/>
+    </linearGradient>
+    <filter id="shadow" x="136" y="136" width="752" height="752" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="30" flood-color="#020812" flood-opacity="0.38"/>
+    </filter>
+    <filter id="glow" x="383" y="302" width="230" height="230" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" fill="#0A1524"/>
+  <rect x="56" y="56" width="912" height="912" rx="210" fill="url(#background)"/>
+  <path d="M105 192C105 114 168 72 237 72H790C870 72 929 136 929 216V473C849 390 744 343 627 343C373 343 165 555 165 817C165 862 171 905 183 946C137 922 105 870 105 808V192Z" fill="#325786" fill-opacity="0.33"/>
+
+  <g filter="url(#shadow)">
+    <rect x="194" y="182" width="626" height="626" rx="146" fill="url(#backFrame)"/>
+    <path d="M255 220H640C710 220 766 276 766 346V634C766 704 710 760 640 760H412C325 760 254 689 254 602V221Z" fill="#0E2340" fill-opacity="0.35"/>
+    <rect x="252" y="240" width="580" height="580" rx="132" fill="#153050"/>
+
+    <rect x="266" y="252" width="504" height="504" rx="112" fill="url(#frontFrame)"/>
+    <rect x="294" y="280" width="448" height="448" rx="90" fill="url(#imageSurface)"/>
+
+    <circle cx="518" cy="419" r="82" fill="#E6A64A" fill-opacity="0.36" filter="url(#glow)"/>
+    <circle cx="518" cy="419" r="60" fill="#FFC66B"/>
+    <circle cx="518" cy="419" r="36" fill="#FFE6AA" fill-opacity="0.55"/>
+
+    <path d="M320 657L425 522C440 503 469 501 486 518L551 585L600 523C615 504 643 503 659 522L717 592V638C717 682 681 716 637 716H384C348 716 320 687 320 651V657Z" fill="url(#mountain)"/>
+    <path d="M320 646L418 554L474 608L554 534L619 617L672 566L717 609V638C717 682 681 716 637 716H384C348 716 320 687 320 651V646Z" fill="#477FAC" fill-opacity="0.76"/>
+    <path d="M320 651L418 554L449 584L408 630L439 655L487 608L554 534L588 578L553 619L600 664L672 566L717 609V638C717 682 681 716 637 716H384C348 716 320 687 320 651Z" fill="#173858" fill-opacity="0.42"/>
+  </g>
+
+  <path d="M291 290C291 252 322 221 360 221H609" stroke="#FFF" stroke-opacity="0.34" stroke-width="10" stroke-linecap="round"/>
+  <path d="M736 695C721 727 686 749 646 749H447" stroke="#FFF" stroke-opacity="0.18" stroke-width="10" stroke-linecap="round"/>
+</svg>

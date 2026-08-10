@@ -21,6 +21,15 @@ class FakeD1PreparedStatement {
     };
   }
 
+  runSync() {
+    const info = this.db.prepare(this.sql).run(...(this.params as never[]));
+    return {
+      results: [],
+      success: true,
+      meta: { last_row_id: Number(info.lastInsertRowid ?? 0), changes: Number(info.changes ?? 0), duration: 0 }
+    };
+  }
+
   async first<T = unknown>(): Promise<T | null> {
     const row = this.db.prepare(this.sql).get(...(this.params as never[]));
     return (row as T | undefined) ?? null;
@@ -39,6 +48,19 @@ export function createFakeD1(schemaSql: string): D1Database {
   return {
     prepare(sql: string) {
       return new FakeD1PreparedStatement(db, sql) as unknown as D1PreparedStatement;
+    },
+    async batch(statements: D1PreparedStatement[]) {
+      db.exec('BEGIN');
+      try {
+        const results = statements.map((statement) =>
+          (statement as unknown as FakeD1PreparedStatement).runSync()
+        );
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
     }
   } as unknown as D1Database;
 }

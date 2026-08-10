@@ -1,6 +1,7 @@
 import { Jwt } from 'hono/utils/jwt';
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../types.js';
+import { apiError } from '../lib/api.js';
 
 export interface DeviceClaims {
   sub: string;
@@ -13,27 +14,24 @@ export function requireAuth(...requiredScopes: string[]): MiddlewareHandler<AppE
   return async (c, next) => {
     const secret = c.env.JWT_SECRET;
     if (!secret) {
-      return c.json(
-        { error: { code: 'SERVER_MISCONFIGURED', message: 'JWT_SECRET is not configured' } },
-        500
-      );
+      return apiError(c, 500, 'SERVER_MISCONFIGURED', 'Authentication is not configured');
     }
 
     const authHeader = c.req.header('Authorization');
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : '';
     if (!token) {
-      return c.json({ error: { code: 'UNAUTHORIZED', message: 'Missing bearer token' } }, 401);
+      return apiError(c, 401, 'UNAUTHORIZED', 'Missing bearer token');
     }
 
     let claims: DeviceClaims;
     try {
       claims = (await Jwt.verify(token, secret, 'HS256')) as unknown as DeviceClaims;
     } catch {
-      return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' } }, 401);
+      return apiError(c, 401, 'UNAUTHORIZED', 'Invalid or expired token');
     }
 
     if (typeof claims.sub !== 'string' || !claims.sub) {
-      return c.json({ error: { code: 'UNAUTHORIZED', message: 'Token is missing a device id' } }, 401);
+      return apiError(c, 401, 'UNAUTHORIZED', 'Invalid device token');
     }
 
     const device = await c.env.DB.prepare('SELECT status, scopes FROM devices WHERE id = ?')
@@ -41,16 +39,13 @@ export function requireAuth(...requiredScopes: string[]): MiddlewareHandler<AppE
       .first<{ status: string; scopes: string }>();
 
     if (!device || device.status !== 'active') {
-      return c.json({ error: { code: 'UNAUTHORIZED', message: 'Device is not enrolled or has been revoked' } }, 401);
+      return apiError(c, 401, 'UNAUTHORIZED', 'Device is not enrolled or has been revoked');
     }
 
     const deviceScopes: string[] = JSON.parse(device.scopes);
     const missing = requiredScopes.filter((scope) => !deviceScopes.includes(scope));
     if (missing.length > 0) {
-      return c.json(
-        { error: { code: 'FORBIDDEN', message: `Missing required scope(s): ${missing.join(', ')}` } },
-        403
-      );
+      return apiError(c, 403, 'FORBIDDEN', `Missing required scope(s): ${missing.join(', ')}`);
     }
 
     c.set('deviceId', claims.sub);

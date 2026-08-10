@@ -12,7 +12,8 @@ export async function enrollDevice(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Enrollment-Secret': (env.ENROLLMENT_SECRET as string) ?? ''
+        'X-Enrollment-Secret': (env.ENROLLMENT_SECRET as string) ?? '',
+        'CF-Connecting-IP': `test-${deviceId}`
       },
       body: JSON.stringify({
         deviceId,

@@ -4,11 +4,15 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-02-04",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "OBSERVABILITY_SAMPLE_RATE": "0.1"
+  },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "framebase-catalog-dev",
-      "database_id": "c3535948-a261-4a63-8775-e13f8870c405"
+      "database_id": "c3535948-a261-4a63-8775-e13f8870c405",
+      "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [

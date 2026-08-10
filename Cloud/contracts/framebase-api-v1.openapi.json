@@ -1,0 +1,189 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Framebase Development API",
+    "version": "1.0.0",
+    "description": "Private fixture-only cloud contract for Framebase Phase 2."
+  },
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "summary": "Public liveness"
+      }
+    },
+    "/v1/capabilities": {
+      "get": {
+        "summary": "Authenticated version capabilities",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/auth/enroll": {
+      "post": {
+        "summary": "Development device enrollment",
+        "parameters": [
+          {
+            "name": "X-Enrollment-Secret",
+            "in": "header",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/v1/auth/revoke": {
+      "post": {
+        "summary": "Revoke a temporary development device",
+        "parameters": [
+          {
+            "name": "X-Enrollment-Secret",
+            "in": "header",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/v1/catalog/bootstrap": {
+      "get": {
+        "summary": "Paginated catalog bootstrap",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/changes": {
+      "get": {
+        "summary": "Ordered exclusive change feed",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/blobs/upload-initiate": {
+      "post": {
+        "summary": "Initiate a signed direct fixture upload",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/blobs/upload-complete": {
+      "post": {
+        "summary": "Verify an uploaded fixture blob",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/blobs/{id}/download": {
+      "get": {
+        "summary": "Issue a signed direct download",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/mutations": {
+      "post": {
+        "summary": "Apply idempotent revisioned catalog mutations",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "requestId"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "ChangeEvent": {
+        "type": "object",
+        "required": [
+          "revision",
+          "entityType",
+          "entityId",
+          "operation",
+          "payload",
+          "actorId",
+          "createdAt"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "entityType": {
+            "enum": [
+              "asset",
+              "folder",
+              "album",
+              "blob"
+            ]
+          },
+          "entityId": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "actorId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}

@@ -104,4 +104,23 @@ describe('POST /v1/auth/enroll', () => {
 
     expect(res.status).toBe(400);
   });
+
+  it('revokes an enrolled development device using the enrollment secret', async () => {
+    const enrolled = await app.request('/v1/auth/enroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Enrollment-Secret': env.ENROLLMENT_SECRET as string },
+      body: JSON.stringify({ deviceId: 'device-revoke', deviceName: 'Revocable', publicKey: 'test-key', scopes: ['library.read'] })
+    }, env);
+    expect(enrolled.status).toBe(200);
+
+    const revoke = await app.request('/v1/auth/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Enrollment-Secret': env.ENROLLMENT_SECRET as string },
+      body: JSON.stringify({ deviceId: 'device-revoke' })
+    }, env);
+    expect(revoke.status).toBe(200);
+
+    const token = (await enrolled.json<{ token: string }>()).token;
+    expect((await app.request('/v1/changes', { headers: { Authorization: `Bearer ${token}` } }, env)).status).toBe(401);
+  });
 });

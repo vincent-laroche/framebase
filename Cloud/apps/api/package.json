@@ -6,15 +6,18 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "acceptance:live": "node scripts/phase2-fixture-acceptance.mjs"
   },
   "dependencies": {
+    "aws4fetch": "^1.0.20",
     "hono": "^4.7.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250204.0",
+    "@cloudflare/workers-types": "^5.20260810.1",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10",
-    "wrangler": "^3.107.0"
+    "wrangler": "^4.120.0"
   }
 }
