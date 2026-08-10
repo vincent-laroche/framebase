@@ -40,6 +40,7 @@
 
 ## Task 3: Build the local `framebase` CLI
 
+- [x] Add read-only `diagnostics`, `list-folders`, and `search` commands with deterministic JSON output and no managed-original path/storage-key output.
 - [ ] Start with `search`, `inspect`, `list-folders`, `proposal`, `apply`, `get-operation`, and `diagnostics`.
 - [ ] Use machine-readable JSON by default where appropriate; redact protected metadata in errors.
 - [ ] Make bulk mutation commands dry-run by default and require an exact approval token to apply.
