@@ -18,7 +18,7 @@ healthRouter.get('/health', async (c) => {
   return c.json({
     status: 'ok',
     environment: 'development',
-    version: '0.1.0',
+    version: '0.2.0',
     db: dbStatus,
     timestamp: new Date().toISOString()
   });
