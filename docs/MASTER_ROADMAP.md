@@ -656,7 +656,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 5 — Finder File Provider integration
 
-**Status:** Planned.
+**Status:** Active implementation. The signing and App Group entry spike is explicitly gated in `docs/phases/PHASE_5_FINDER_FILE_PROVIDER.md`.
 
 **User-visible outcome:** Framebase appears as a Finder location and as a source in standard macOS file pickers. Files materialize on demand while logical organization remains cloud/catalog based.
 
@@ -683,7 +683,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 6 — OCR, intelligent metadata, and semantic search
 
-**Status:** Planned.
+**Status:** Approved and planned. Local implementation begins only after the Phase 5 signed File Provider exit gate; see `docs/phases/PHASE_6_INTELLIGENCE_AND_SEMANTIC_SEARCH.md`.
 
 **User-visible outcome:** Framebase can read text, describe and classify images, group related material, and answer semantic searches while retaining provenance and privacy controls.
 

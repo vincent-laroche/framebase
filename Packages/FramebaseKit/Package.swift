@@ -10,9 +10,10 @@ let package = Package(
     products: [
         .library(name: "FramebaseDomain", targets: ["FramebaseDomain"]),
         .library(name: "FramebaseCatalog", targets: ["FramebaseCatalog"]),
-        .library(name: "FramebaseMedia", targets: ["FramebaseMedia"])
-        , .library(name: "FramebaseAPIClient", targets: ["FramebaseAPIClient"])
-        , .library(name: "FramebaseSync", targets: ["FramebaseSync"])
+        .library(name: "FramebaseMedia", targets: ["FramebaseMedia"]),
+        .library(name: "FramebaseAPIClient", targets: ["FramebaseAPIClient"]),
+        .library(name: "FramebaseSync", targets: ["FramebaseSync"]),
+        .library(name: "FramebaseFileProviderCore", targets: ["FramebaseFileProviderCore"])
     ],
     dependencies: [
         .package(
@@ -42,6 +43,10 @@ let package = Package(
             dependencies: ["FramebaseDomain", "FramebaseCatalog", "FramebaseMedia", "FramebaseAPIClient"]
         ),
         .target(
+            name: "FramebaseFileProviderCore",
+            dependencies: ["FramebaseDomain"]
+        ),
+        .target(
             name: "FramebaseTestSupport",
             dependencies: ["FramebaseDomain"]
         ),
@@ -69,6 +74,10 @@ let package = Package(
         .testTarget(
             name: "FramebaseSyncTests",
             dependencies: ["FramebaseSync", "FramebaseCatalog", "FramebaseMedia", "FramebaseAPIClient", "FramebaseTestSupport"]
+        ),
+        .testTarget(
+            name: "FramebaseFileProviderCoreTests",
+            dependencies: ["FramebaseFileProviderCore", "FramebaseDomain"]
         )
     ]
 )
