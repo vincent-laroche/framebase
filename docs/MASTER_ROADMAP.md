@@ -18,6 +18,9 @@ If documents conflict, use this order:
 
 This roadmap is derived from the complete Framebase product conversation and the repository state inspected on 2026-08-08. Platform details must be reverified before each phase because Cloudflare and Apple capabilities can change.
 
+### Plan freshness note — audited 2026-08-21
+The most recently updated focused plan is `docs/phases/PHASE_9_LIBRARY_SPACES.md`, last changed 2026-08-10 in commit `7bfa665` (`Add separate personal and HSC libraries`). The roadmap itself was last changed in that same commit. Earlier phase files remain as implementation contracts and exit-gate evidence; they are not deleted merely because their local slices are implemented. Current status is maintained here and in `PROJECT.md`.
+
 ## Status vocabulary
 
 Framebase documentation must distinguish these states precisely:
@@ -80,20 +83,19 @@ Framebase must not search, organize, analyze, upload, or grant agent access
 across library spaces. See `docs/phases/PHASE_9_LIBRARY_SPACES.md` for the
 active local and cloud-separation implementation plan.
 
-## Current baseline — Phase 1 implemented locally
+## Current baseline — local and development slices verified on 2026-08-21
+The original Phase 1 native foundation remains implemented locally and is still the primary usable client. The repository now also contains verified local or development-only slices for the later contracts; these do not imply that the complete product or production gates are finished.
 
-The existing application is the first product foundation, not the final product. It currently provides:
+| Area | Current evidence | Remaining boundary |
+| --- | --- | --- |
+| Native foundation | SwiftUI/AppKit app, managed immutable originals, GRDB catalog, import, browser, inspector, folders, albums, tags, search, Trash/restore, receipts, and local settings | Native UI workflow Undo currently fails its end-to-end test and needs repair. |
+| Cloud contract and sync | Development Worker, D1, private R2, Swift API client/sync, outbox, reconciliation, and synthetic fixture acceptance | Personal-library migration and production cloud cutover are not complete. |
+| Finder integration | File Provider IDs, snapshots, materialization, catalog bridge, and tests | Native extension, signing, App Group, and Finder lifecycle gate remain open. |
+| Intelligence | Local Apple Vision OCR/barcode/document analysis, provenance, and review controls | Cloud provider calls, embeddings, and semantic search remain gated. |
+| Workflows and agents | Local proposal/approval/audit/undo spine, OpenAPI/CLI contracts, local agent attribution, and fixtures | Cloud Queues/Workflows, remote MCP hosting, and production identity remain unshipped. |
+| Library spaces | Separate local Personal and HSC registry/isolation proof | Separate production cloud targets and operational hardening remain planned. |
 
-- A native SwiftUI/AppKit macOS application.
-- A managed local library package with immutable UUID-keyed originals.
-- A GRDB/SQLite catalog with assets, folders, albums, and album membership.
-- A native folder source list with create, rename, reparent, delete-to-Inbox, undo, and redo.
-- A native collection-view asset browser with paging, thumbnails, sorting, multi-selection, keyboard navigation, and drag-to-folder.
-- Local still-image import, metadata extraction, previews, and bounded caches.
-- Single- and multi-selection inspectors, favorites, ratings, and local settings.
-- Package, UI, launch, and 100,000-record performance verification.
-
-Phase 1 intentionally has no networking, cloud storage, synchronization, Finder File Provider, OCR, semantic search, workflows, or agent API.
+The live development Worker is fixture-oriented and remains separate from the native app’s personal library. No production deployment, personal-media upload, native File Provider extension, cloud AI provider call, remote MCP host, or permanent purge capability is implied by this baseline.
 
 ## Architecture principles
 
@@ -555,7 +557,7 @@ Permanent purge is never included in a general write scope.
 
 ## Phase 2 — Cloud contract and safety spine
 
-**Status:** Implemented on the isolated development environment (2026-08-09).
+**Status:** Deployed to development; local and live verification recorded (2026-08-09).
 The fixture-contract and safety exit evidence is recorded in `PROJECT.md`.
 Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
@@ -597,7 +599,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 3 — Cloud-backed library, image delivery, and offline sync
 
-**Status:** In progress. Authority: `docs/phases/PHASE_3_CLOUD_BACKED_LIBRARY.md`.
+**Status:** Implemented locally with a development fixture acceptance; personal-library cloud migration remains open. Authority: `docs/phases/PHASE_3_CLOUD_BACKED_LIBRARY.md`.
 
 **User-visible outcome:** The Mac app can opt a library into cloud backing, upload originals safely, stay responsive from local SQLite, work offline, and display cloud-derived thumbnails/previews.
 
@@ -639,7 +641,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 4 — Complete organization, search, trash, and recovery
 
-**Status:** Active implementation plan — see `docs/phases/PHASE_4_COMPLETE_ORGANIZATION.md`.
+**Status:** Implemented locally; development cloud parity and restore-drill release gates remain open. Authority: `docs/phases/PHASE_4_COMPLETE_ORGANIZATION.md`.
 
 **User-visible outcome:** Framebase becomes a complete manual asset manager before intelligence is added.
 
@@ -666,7 +668,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 5 — Finder File Provider integration
 
-**Status:** Active implementation. The signing and App Group entry spike is explicitly gated in `docs/phases/PHASE_5_FINDER_FILE_PROVIDER.md`.
+**Status:** Core contracts implemented locally; the native extension, signing, and App Group gate remain open. Authority: `docs/phases/PHASE_5_FINDER_FILE_PROVIDER.md`.
 
 **User-visible outcome:** Framebase appears as a Finder location and as a source in standard macOS file pickers. Files materialize on demand while logical organization remains cloud/catalog based.
 
@@ -693,7 +695,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 6 — OCR, intelligent metadata, and semantic search
 
-**Status:** Approved and in progress. The local OCR/barcode/document foundation is in review under an explicit sequencing exception; see `docs/phases/PHASE_6_INTELLIGENCE_AND_SEMANTIC_SEARCH.md` and `docs/phases/PHASE_6_VISUAL_PHOTO_INTELLIGENCE.md`.
+**Status:** Local analysis and review controls implemented; cloud intelligence and semantic search remain gated. Authority: `docs/phases/PHASE_6_INTELLIGENCE_AND_SEMANTIC_SEARCH.md` and `docs/phases/PHASE_6_VISUAL_PHOTO_INTELLIGENCE.md`.
 
 **User-visible outcome:** Framebase can read text, describe and classify images, group related material, and answer semantic searches while retaining provenance and privacy controls.
 
@@ -722,7 +724,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 7 — Durable visual workflows
 
-**Status:** Approved for local contract and planner work. Queues, Workflows, bindings, credentials, and deployment remain separately approval-gated; see `docs/phases/PHASE_7_DURABLE_VISUAL_WORKFLOWS.md`.
+**Status:** Local contract, planner, approval, audit, and exact-undo spine implemented; remote durability remains separately approval-gated. Authority: `docs/phases/PHASE_7_DURABLE_VISUAL_WORKFLOWS.md`.
 
 **User-visible outcome:** The user can build WHEN → IF → THEN automations, preview their exact effect, approve sensitive operations, and inspect or undo every run.
 
@@ -751,7 +753,7 @@ Authority: `docs/phases/PHASE_2_CLOUD_FOUNDATION.md`.
 
 ## Phase 8 — OpenAPI, CLI, and MCP agent platform
 
-**Status:** Approved for local contract, CLI, and test-fixture work. Any remote agent identity, credential, MCP deployment, or public/private endpoint remains separately approval-gated; see `docs/phases/PHASE_8_OPENAPI_CLI_MCP.md`.
+**Status:** Local contract, CLI, attribution, and test-fixture work implemented; remote MCP and agent deployment remain separately approval-gated. Authority: `docs/phases/PHASE_8_OPENAPI_CLI_MCP.md`.
 
 **User-visible outcome:** Codex, Claude, scripts, and other trusted tools can search, inspect, organize, analyze, export, and run workflows through supported interfaces instead of UI automation.
 

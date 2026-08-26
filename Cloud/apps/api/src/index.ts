@@ -33,6 +33,6 @@ app.route('/v1', derivativesRouter);
 app.route('/v1', agentsRouter);
 
 // Root fallback
-app.get('/', (c) => c.json({ name: 'Framebase API Dev', version: '0.1.0', docs: '/v1/health' }));
+app.get('/', (c) => c.json({ name: 'Framebase API Dev', version: '0.2.0', docs: '/v1/health' }));
 
 export default app;

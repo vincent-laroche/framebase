@@ -48,7 +48,7 @@ struct DomainFoundationTests {
             $0.path == ["00_inbox"] && $0.provisioning == .initial
         })
         #expect(HairSolutionsLibraryTemplate.folders.contains {
-            $0.path == ["04_lifestyle", "active"] && $0.provisioning == .onFirstUse
+            $0.path == ["04_lifestyle", "active"] && $0.provisioning == .initial
         })
         let status = HairSolutionsLibraryTemplate.tagNamespaces.first { $0.namespace == "status" }
         #expect(status?.allowedValues.contains("review") == true)

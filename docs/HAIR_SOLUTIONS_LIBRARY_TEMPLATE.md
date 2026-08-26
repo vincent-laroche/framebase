@@ -8,7 +8,7 @@ This is the built-in Framebase starter taxonomy for the Hair Solutions visual li
 - A tag records a cross-cutting or changing fact: review status, source, product used, article, campaign, channel, or rights.
 - Do not create status folders such as `approved` or `needs-review`. Use `status:approved` and `status:review` instead.
 - `gallery` and `raw` remain folders because they describe distinct, durable asset roles. An edited gallery export is a new asset; it does not turn a raw original into a gallery file.
-- Folders marked **on first use** are listed in the vocabulary but are not created in a new library until they receive an asset.
+- Every listed folder is created empty when the template is applied. Asset placement remains a separate, later review step.
 
 ## Folder tree
 
@@ -28,7 +28,7 @@ The canonical structure lives in `HairSolutionsLibraryTemplate.folders`. Its top
 10_private      personal and sensitive material
 ```
 
-Key durable paths include `01_products/hair-systems/thin-skin-pro/{gallery,raw,renders}`, the named recurring people under `03_people/models`, the five Shopify blog handles under `06_web/blog`, and `08_marketing/campaigns/2026-09-relaunch`. The full declarative list preserves the on-demand markers from the supplied taxonomy.
+Key durable paths include `01_products/hair-systems/thin-skin-pro/{gallery,raw,renders}`, the named recurring people under `03_people/models`, the five Shopify blog handles under `06_web/blog`, and `08_marketing/campaigns/2026-09-relaunch`. The full declarative list creates every path in the supplied taxonomy immediately.
 
 ## Tag contract
 
@@ -43,5 +43,7 @@ Tags use lowercase `namespace:value` slugs. The eventual Phase 4 tag editor shou
 | `campaign` | Campaign slug, e.g. `campaign:2026-09-relaunch` |
 | `channel` | `meta`, `google`, `instagram`, `email` |
 | `rights` | `internal-only`, `vendor-provided`, `licensed`, `customer-consented` |
+
+The template creates all controlled values above, plus the three explicit examples from this structure: `product:thin-skin-pro`, `article:how-to-apply-tape`, and `campaign:2026-09-relaunch`. Other product, article, and campaign tags are created only when Vincent defines them; the template does not invent names.
 
 This taxonomy is now represented in `FramebaseDomain` and tested, but it does not yet create a library, persist tags, or bulk-assign existing assets. Those actions belong to the focused Phase 4 organization plan and require an explicit apply/review flow.

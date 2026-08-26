@@ -2,7 +2,7 @@
 
 ## Where the work is
 
-Worktree: `/Users/vMac/01_projects/private_apps_and_products/framebase/.claude/worktrees/framebase-photo-import-a78197`
+Worktree: `/Users/vMac/01_projects/products/framebase/.claude/worktrees/framebase-photo-import-a78197`
 Branch: `claude/framebase-photo-import-a78197` — **2 commits ahead of `origin/main`, unpushed.**
 
 There is a second, near-identical worktree (`...-handoff-73b703`) that is a clean checkout of the
@@ -11,7 +11,7 @@ base commit `14072aa`. **Ignore it.** All work is in `a78197`.
 Two files to know about before you start:
 
 - `docs/MASTER_ROADMAP.md` exists **only in the canonical checkout**
-  (`/Users/vMac/01_projects/private_apps_and_products/framebase/docs/`) and is untracked there.
+  (`/Users/vMac/01_projects/products/framebase/docs/`) and is untracked there.
   It is **not** in this worktree. Read it from the canonical path.
 - The canonical checkout has unrelated uncommitted work (`AGENTS.md`, `PROJECT.md`, `README.md`,
   `docs/`, `.claude/`, `GEMINI.md`, `.codex/`). **Do not touch it.**

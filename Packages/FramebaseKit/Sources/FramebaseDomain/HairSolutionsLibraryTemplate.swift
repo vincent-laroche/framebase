@@ -50,27 +50,27 @@ public enum HairSolutionsLibraryTemplate {
         initial("00_inbox"),
         initial("01_products"), initial("01_products/hair-systems"), initial("01_products/hair-systems/thin-skin-pro"),
         initial("01_products/hair-systems/thin-skin-pro/gallery"), initial("01_products/hair-systems/thin-skin-pro/raw"),
-        onFirstUse("01_products/hair-systems/thin-skin-pro/renders"),
+        initial("01_products/hair-systems/thin-skin-pro/renders"),
         initial("01_products/maintenance"), initial("01_products/maintenance/prohair-labs"),
         initial("01_products/maintenance/prohair-labs/gallery"), initial("01_products/maintenance/prohair-labs/raw"),
         initial("02_specs"), initial("02_specs/swatches"), initial("02_specs/swatches/curl-pattern"),
         initial("02_specs/swatches/base-material"), initial("02_specs/swatches/hairline-shape"),
         initial("02_specs/swatches/hair-direction"), initial("02_specs/swatches/hair-color"),
-        initial("02_specs/swatches/density"), onFirstUse("02_specs/swatches/base-size"),
-        onFirstUse("02_specs/swatches/grey-percentage"), initial("02_specs/icons"), initial("02_specs/diagrams"),
+        initial("02_specs/swatches/density"), initial("02_specs/swatches/base-size"),
+        initial("02_specs/swatches/grey-percentage"), initial("02_specs/icons"), initial("02_specs/diagrams"),
         initial("02_specs/guides"), initial("02_specs/guides/measuring"), initial("02_specs/guides/option-help"),
         initial("03_people"), initial("03_people/models"),
         initial("03_people/models/vincent"), initial("03_people/models/barry"), initial("03_people/models/serge"),
         initial("03_people/models/kevin"), initial("03_people/models/salem"), initial("03_people/models/danny"),
         initial("03_people/models/declan"), initial("03_people/models/kyle"), initial("03_people/models/alex"),
         initial("03_people/models/yago"), initial("03_people/founder"), initial("03_people/before-after"),
-        initial("03_people/before-after/studio"), onFirstUse("03_people/before-after/customer-submitted"),
-        initial("03_people/customers"), initial("03_people/customers/testimonials"), onFirstUse("03_people/customers/ugc"),
+        initial("03_people/before-after/studio"), initial("03_people/before-after/customer-submitted"),
+        initial("03_people/customers"), initial("03_people/customers/testimonials"), initial("03_people/customers/ugc"),
         initial("03_people/details"), initial("04_lifestyle"), initial("04_lifestyle/barber-salon"),
-        initial("04_lifestyle/grooming"), initial("04_lifestyle/everyday"), onFirstUse("04_lifestyle/active"),
-        onFirstUse("04_lifestyle/work"), onFirstUse("04_lifestyle/social"), initial("05_education"),
-        initial("05_education/application"), onFirstUse("05_education/removal"), onFirstUse("05_education/care"),
-        onFirstUse("05_education/styling"), initial("06_web"), initial("06_web/home"), initial("06_web/home/hero"),
+        initial("04_lifestyle/grooming"), initial("04_lifestyle/everyday"), initial("04_lifestyle/active"),
+        initial("04_lifestyle/work"), initial("04_lifestyle/social"), initial("05_education"),
+        initial("05_education/application"), initial("05_education/removal"), initial("05_education/care"),
+        initial("05_education/styling"), initial("06_web"), initial("06_web/home"), initial("06_web/home/hero"),
         initial("06_web/home/process"), initial("06_web/home/featured"), initial("06_web/home/testimonials"),
         initial("06_web/about"), initial("06_web/about/hero"), initial("06_web/about/story"), initial("06_web/about/testimonials"),
         initial("06_web/contact"), initial("06_web/help-center"), initial("06_web/help-center/article-covers"),
@@ -81,13 +81,13 @@ public enum HairSolutionsLibraryTemplate {
         initial("06_web/blog/professionals-salons"), initial("06_web/blog/shared"), initial("06_web/global"),
         initial("06_web/global/promo-banners"), initial("06_web/global/parallax"), initial("06_web/global/og"),
         initial("07_brand"), initial("07_brand/logos"), initial("07_brand/logos/primary"),
-        onFirstUse("07_brand/logos/variants"), initial("07_brand/logos/third-party"), initial("07_brand/ui"),
+        initial("07_brand/logos/variants"), initial("07_brand/logos/third-party"), initial("07_brand/ui"),
         initial("07_brand/ui/elements"), initial("07_brand/ui/icons"), initial("07_brand/ui/backgrounds"),
         initial("08_marketing"), initial("08_marketing/email"), initial("08_marketing/email/banners"),
         initial("08_marketing/campaigns"), initial("08_marketing/campaigns/2026-09-relaunch"),
-        onFirstUse("08_marketing/social"), onFirstUse("08_marketing/ads"), initial("09_reference"),
+        initial("08_marketing/social"), initial("08_marketing/ads"), initial("09_reference"),
         initial("09_reference/competitors"), initial("09_reference/ops-screenshots"), initial("09_reference/vendors"),
-        onFirstUse("09_reference/inspiration"), initial("10_private"), initial("10_private/personal"), initial("10_private/sensitive")
+        initial("09_reference/inspiration"), initial("10_private"), initial("10_private/personal"), initial("10_private/sensitive")
     ]
 
     /// Values are always stored as lowercase `namespace:value` slugs. Do not
@@ -102,6 +102,15 @@ public enum HairSolutionsLibraryTemplate {
         .init(namespace: "rights", allowedValues: ["internal-only", "vendor-provided", "licensed", "customer-consented"], allowsCustomValues: false, allowsMultipleValuesPerAsset: false)
     ]
 
+    /// Explicit examples named in the initial library structure. Other
+    /// product, article, and campaign tags remain user-defined, so the
+    /// template never invents business vocabulary that was not supplied.
+    public static let initialCustomTagRawValues = [
+        "product:thin-skin-pro",
+        "article:how-to-apply-tape",
+        "campaign:2026-09-relaunch"
+    ]
+
     public static var initialFolders: [LibraryFolderTemplate] {
         folders.filter { $0.provisioning == .initial }
     }
@@ -113,6 +122,14 @@ public enum HairSolutionsLibraryTemplate {
     public static func validates(_ tagName: TagName) -> Bool {
         guard let template = tagNamespace(named: tagName.namespace) else { return true }
         return template.allowsCustomValues || template.allowedValues.contains(tagName.value)
+    }
+
+    public static func initialTagNames() throws -> [TagName] {
+        let controlled = try tagNamespaces.flatMap { namespace in
+            try namespace.allowedValues.map { try TagName(namespace: namespace.namespace, value: $0) }
+        }
+        let explicit = try initialCustomTagRawValues.map(TagName.init)
+        return (controlled + explicit).sorted { $0.rawValue < $1.rawValue }
     }
 
     private static func initial(_ path: String) -> LibraryFolderTemplate {

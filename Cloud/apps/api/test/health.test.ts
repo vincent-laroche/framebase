@@ -19,3 +19,16 @@ describe('GET /v1/health', () => {
     expect(body.db).toBe('ok');
   });
 });
+
+describe('GET /', () => {
+  let env: Bindings;
+  beforeEach(() => {
+    env = createTestEnv();
+  });
+  it('reports the current API version', async () => {
+    const res = await app.request('/', {}, env);
+    expect(res.status).toBe(200);
+    const body = await res.json<{ version: string }>();
+    expect(body.version).toBe('0.2.0');
+  });
+});
