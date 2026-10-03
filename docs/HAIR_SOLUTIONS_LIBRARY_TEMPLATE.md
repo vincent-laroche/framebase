@@ -1,6 +1,6 @@
 # Hair Solutions library template
 
-This is the built-in Framebase starter taxonomy for the Hair Solutions visual library. It is a **logical catalog template**, not a filesystem tree and not a command to change an existing library. Applying it later must create folders through `FolderRepository`; original bytes and immutable storage keys never move.
+This is the built-in Framebase starter taxonomy for the **Hair Solutions library space only**. Personal photos and screenshots use their own templates (`PersonalLibraryTemplate` and `ScreenshotsLibraryTemplate`); they do not receive this product tree. It is a **logical catalog template**, not a filesystem tree and not a command to change an existing library. Applying it creates folders through the catalog; original bytes and immutable storage keys never move.
 
 ## Organizing rule
 
@@ -46,4 +46,4 @@ Tags use lowercase `namespace:value` slugs. The eventual Phase 4 tag editor shou
 
 The template creates all controlled values above, plus the three explicit examples from this structure: `product:thin-skin-pro`, `article:how-to-apply-tape`, and `campaign:2026-09-relaunch`. Other product, article, and campaign tags are created only when Vincent defines them; the template does not invent names.
 
-This taxonomy is now represented in `FramebaseDomain` and tested, but it does not yet create a library, persist tags, or bulk-assign existing assets. Those actions belong to the focused Phase 4 organization plan and require an explicit apply/review flow.
+This taxonomy is represented in `FramebaseDomain` and is applied only by the explicit review sheet, and only inside a Hair Solutions catalog. It does not move assets or assign tags to existing files. `09_reference/ops-screenshots` stays a business reference folder; Vincent's screenshot and noise library is a separate library space, not this folder.

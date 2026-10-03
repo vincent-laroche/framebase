@@ -6,42 +6,7 @@ import FramebaseSync
 import Foundation
 import Observation
 
-enum LibrarySpace: String, Codable, CaseIterable, Hashable, Sendable {
-    case personal
-    case hairSolutions
-
-    var displayName: String {
-        switch self {
-        case .personal: "Personal Library"
-        case .hairSolutions: "HSC Library"
-        }
-    }
-
-    var packageName: String {
-        "\(displayName).framebase"
-    }
-
-    static func inferred(from rootURL: URL) -> LibrarySpace? {
-        allCases.first { $0.packageName == rootURL.lastPathComponent }
-    }
-}
-
-struct LibraryDescriptor: Codable, Hashable, Identifiable, Sendable {
-    let catalogID: CatalogID
-    let displayName: String
-    let space: LibrarySpace
-    let rootPath: String
-
-    var id: CatalogID { catalogID }
-    var rootURL: URL { URL(fileURLWithPath: rootPath, isDirectory: true) }
-
-    init(catalogID: CatalogID, displayName: String, space: LibrarySpace, rootURL: URL) {
-        self.catalogID = catalogID
-        self.displayName = displayName
-        self.space = space
-        self.rootPath = rootURL.standardizedFileURL.path
-    }
-}
+typealias LibraryDescriptor = LibraryRegistration
 
 @MainActor
 struct LibraryRegistry {
@@ -60,28 +25,6 @@ struct LibraryRegistry {
     func save(_ libraries: [LibraryDescriptor]) {
         guard let data = try? JSONEncoder().encode(libraries) else { return }
         preferences.set(data, forKey: Self.knownLibrariesKey)
-    }
-
-    func upserting(
-        catalogID: CatalogID,
-        rootURL: URL,
-        preferredSpace: LibrarySpace? = nil
-    ) -> [LibraryDescriptor] {
-        let path = rootURL.standardizedFileURL.path
-        var libraries = load()
-        let existing = libraries.first { $0.rootPath == path || $0.catalogID == catalogID }
-        let space = preferredSpace ?? existing?.space ?? .personal
-        let descriptor = LibraryDescriptor(
-            catalogID: catalogID,
-            displayName: preferredSpace?.displayName ?? existing?.displayName ?? LibrarySpace.personal.displayName,
-            space: space,
-            rootURL: rootURL
-        )
-        libraries.removeAll { $0.rootPath == path || $0.catalogID == catalogID }
-        libraries.append(descriptor)
-        libraries.sort { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
-        save(libraries)
-        return libraries
     }
 }
 
@@ -198,6 +141,7 @@ final class AppContainer {
         libraryState = .opening
 
         do {
+            try Self.requireAvailableLibraryPackage(at: rootURL)
             let layout = try await libraryCoordinator.openLibrary(at: rootURL)
             try await activateLibrary(layout, preferredSpace: LibrarySpace.inferred(from: rootURL))
         } catch {
@@ -227,11 +171,9 @@ final class AppContainer {
         libraryState = .opening
 
         do {
+            try Self.requireAvailableLibraryPackage(at: library.rootURL)
             let layout = try await libraryCoordinator.openLibrary(at: library.rootURL)
-            try await activateLibrary(
-                layout,
-                preferredSpace: LibrarySpace.inferred(from: library.rootURL) ?? library.space
-            )
+            try await activateLibrary(layout, preferredSpace: library.space)
         } catch {
             libraryState = .failed(error.localizedDescription)
         }
@@ -419,6 +361,20 @@ final class AppContainer {
         preferredSpace: LibrarySpace? = nil
     ) async throws {
         let catalog = try CatalogDatabase(catalogURL: layout.catalogDatabaseURL)
+        let registrations = try LibraryRegistrationRules.upsert(
+            existing: knownLibraries,
+            catalogID: catalog.catalogID,
+            rootPath: layout.rootURL.standardizedFileURL.path,
+            preferredSpace: preferredSpace
+        )
+        guard let registration = registrations.first(where: { $0.catalogID == catalog.catalogID }) else {
+            throw CatalogError.missingCatalogIdentity
+        }
+        if let recorded = try await catalog.librarySpace(), recorded != registration.space {
+            throw LibraryRegistrationError.librarySpaceConflict(existing: recorded, requested: registration.space)
+        }
+        try await catalog.assignLibrarySpace(registration.space)
+
         let blobStore = try ManagedAssetBlobStore(
             originalsDirectoryURL: layout.originalsDirectoryURL,
             stagingDirectoryURL: layout.stagingDirectoryURL
@@ -461,16 +417,22 @@ final class AppContainer {
             cacheDirectoryURL: try Self.thumbnailCacheDirectoryURL()
         )
         libraryRootURL = layout.rootURL
-        knownLibraries = LibraryRegistry(preferences: preferences).upserting(
-            catalogID: catalog.catalogID,
-            rootURL: layout.rootURL,
-            preferredSpace: preferredSpace
-        )
-        activeLibrary = knownLibraries.first { $0.catalogID == catalog.catalogID }
+        LibraryRegistry(preferences: preferences).save(registrations)
+        knownLibraries = registrations
+        activeLibrary = registration
         if persistSelection {
             preferences.set(layout.rootURL.path, forKey: Self.libraryRootPreferenceKey)
         }
         libraryState = .ready(catalog.catalogID)
+    }
+
+    private static func requireAvailableLibraryPackage(at rootURL: URL) throws {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: rootURL.path, isDirectory: &isDirectory)
+        try LibraryRegistrationRules.requireAvailableRoot(
+            rootURL.standardizedFileURL.path,
+            isDirectory: exists && isDirectory.boolValue
+        )
     }
 
     private static func thumbnailCacheDirectoryURL() throws -> URL {

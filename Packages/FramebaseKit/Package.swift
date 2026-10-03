@@ -50,7 +50,7 @@ let package = Package(
         ),
         .target(
             name: "FramebaseCLI",
-            dependencies: ["FramebaseDomain", "FramebaseCatalog"]
+            dependencies: ["FramebaseDomain", "FramebaseCatalog", "FramebaseMedia"]
         ),
         .target(
             name: "FramebaseTestSupport",
@@ -92,7 +92,7 @@ let package = Package(
         ),
         .testTarget(
             name: "FramebaseCLITests",
-            dependencies: ["FramebaseCLI", "FramebaseCatalog", "FramebaseDomain", "FramebaseTestSupport"]
+            dependencies: ["FramebaseCLI", "FramebaseCatalog", "FramebaseDomain", "FramebaseMedia", "FramebaseTestSupport"]
         )
     ]
 )

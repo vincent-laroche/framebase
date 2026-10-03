@@ -1,4 +1,5 @@
 import Foundation
+import FramebaseDomain
 
 enum LibraryPackageError: Error, LocalizedError, Sendable {
     case invalidExtension(URL)

@@ -21,7 +21,7 @@ public enum FramebaseCLIError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .missingCommand: "Choose diagnostics, list-folders, search, inspect, agent, proposal, apply, or get-operation."
+        case .missingCommand: "Choose diagnostics, list-folders, search, inspect, agent, proposal, apply, get-operation, or ingest-screenshots."
         case let .unsupportedCommand(command): "Unsupported command: \(command)."
         case .missingCatalogPath: "Pass --catalog followed by a catalog.sqlite path."
         case .missingSearchText: "Pass --text followed by a search value."
@@ -55,16 +55,23 @@ public enum FramebaseCLI {
       framebase proposal tag --catalog /path/to/catalog.sqlite --agent UUID --asset UUID [--asset UUID] --tag namespace:value
       framebase get-operation --catalog /path/to/catalog.sqlite --operation UUID
       framebase apply --catalog /path/to/catalog.sqlite --agent UUID --operation UUID --approval OPAQUE_TOKEN
+      framebase ingest-screenshots [--library "/path/to/Screenshots Library.framebase"] [--inbox "/path/to/Framebase Screenshot Inbox"]
 
-    Mutations are proposal-first. Create an explicit local agent identity
+    Mutations other than screenshot intake are proposal-first. Create an explicit local agent identity
     first; `proposal tag` changes no organization and returns a short-lived
     opaque approval token bound to that identity; `apply` requires that exact
     token, identity, and an unchanged logical snapshot. The CLI never exposes
     managed-original paths, storage keys, cloud credentials, or permanent purge.
+    `ingest-screenshots` copies new files into the Screenshots library only,
+    stores local Apple Vision OCR text, and leaves the dropped files in place.
+    The same screenshot bytes are never imported twice.
     """
 
     public static func execute(arguments: [String]) async throws -> String {
         if arguments == ["--help"] || arguments == ["help"] { return usage }
+        if arguments.first == "ingest-screenshots" {
+            return try await ingestScreenshots(arguments: Array(arguments.dropFirst()))
+        }
         let command = try Command(arguments: arguments)
         let catalog = try CatalogDatabase(catalogURL: command.catalogURL)
 
@@ -137,7 +144,7 @@ public enum FramebaseCLI {
         return identity
     }
 
-    private static func encode<Value: Encodable>(_ response: Value) throws -> String {
+    static func encode<Value: Encodable>(_ response: Value) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601

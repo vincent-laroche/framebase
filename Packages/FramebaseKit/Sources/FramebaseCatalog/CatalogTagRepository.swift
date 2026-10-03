@@ -36,7 +36,7 @@ public struct CatalogTagRepository: TagRepository, Sendable {
 
     public func createTag(named name: TagName) async throws -> Tag {
         try await databasePool.write { db in
-            try Self.validateTemplateTag(name)
+            try Self.validateTemplateTag(name, in: db)
             let now = Date()
             let tag = Tag(name: name, createdAt: now, updatedAt: now)
             try db.execute(
@@ -50,7 +50,7 @@ public struct CatalogTagRepository: TagRepository, Sendable {
     public func renameTag(_ tagID: TagID, to name: TagName) async throws {
         try await databasePool.write { db in
             try Self.requireTag(tagID, in: db)
-            try Self.validateTemplateTag(name)
+            try Self.validateTemplateTag(name, in: db)
             try db.execute(
                 sql: "UPDATE tags SET namespace = ?, value = ?, name = ?, updated_at_ms = ? WHERE id = ?",
                 arguments: [name.namespace, name.value, name.rawValue, CatalogDate.milliseconds(Date()), tagID.description]
@@ -105,8 +105,9 @@ public struct CatalogTagRepository: TagRepository, Sendable {
                 }
                 return tag
             }
+            let namespaces = try Self.controlledNamespaces(in: db)
             let singleValueNamespaces = Set(tags.compactMap { tag -> String? in
-                guard let template = HairSolutionsLibraryTemplate.tagNamespace(named: tag.name.namespace),
+                guard let template = namespaces.first(where: { $0.namespace == tag.name.namespace }),
                       !template.allowsMultipleValuesPerAsset else { return nil }
                 return tag.name.namespace
             })
@@ -156,10 +157,23 @@ public struct CatalogTagRepository: TagRepository, Sendable {
         guard exists else { throw CatalogError.tagNotFound(tagID) }
     }
 
-    private static func validateTemplateTag(_ tagName: TagName) throws {
-        guard HairSolutionsLibraryTemplate.validates(tagName) else {
+    private static func validateTemplateTag(_ tagName: TagName, in db: Database) throws {
+        let valid: Bool
+        if let space = try CatalogDatabase.storedLibrarySpace(in: db) {
+            valid = space.validates(tagName)
+        } else {
+            valid = HairSolutionsLibraryTemplate.validates(tagName)
+        }
+        guard valid else {
             throw DomainValidationError.invalidTagName
         }
+    }
+
+    private static func controlledNamespaces(in db: Database) throws -> [LibraryTagNamespaceTemplate] {
+        if let space = try CatalogDatabase.storedLibrarySpace(in: db) {
+            return space.tagNamespaces
+        }
+        return HairSolutionsLibraryTemplate.tagNamespaces
     }
 }
 
