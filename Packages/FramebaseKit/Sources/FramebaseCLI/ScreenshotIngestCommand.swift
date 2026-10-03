@@ -47,7 +47,7 @@ extension FramebaseCLI {
         return try encode(report)
     }
 
-    private static func flagValue(_ flag: String, in values: inout [String]) throws -> String? {
+    static func flagValue(_ flag: String, in values: inout [String]) throws -> String? {
         guard let index = values.firstIndex(of: flag) else { return nil }
         let valueIndex = values.index(after: index)
         guard valueIndex < values.endIndex else { throw FramebaseCLIError.unexpectedArgument(flag) }

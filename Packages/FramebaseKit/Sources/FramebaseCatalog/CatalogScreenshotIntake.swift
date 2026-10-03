@@ -2,7 +2,7 @@ import Foundation
 import FramebaseDomain
 import GRDB
 
-extension CatalogDatabase: ScreenshotIntakeCatalog {
+extension CatalogDatabase: ScreenshotIntakeCatalog, OriginalReceiveCatalog {
     public var inboxFolderID: FolderID { inboxID }
 
     public func assetID(forContentSHA256 sha256: String) async throws -> AssetID? {
@@ -26,9 +26,13 @@ extension CatalogDatabase: ScreenshotIntakeCatalog {
         try await assets.asset(id: id)
     }
 
+    public func insertScreenshot(_ asset: Asset, contentSHA256: String) async throws {
+        try await insertOriginal(asset, contentSHA256: contentSHA256)
+    }
+
     /// Inserts the asset and its original-byte SHA-256 in one write.
     /// A second insert of the same bytes rolls back and reports a duplicate.
-    public func insertScreenshot(_ asset: Asset, contentSHA256: String) async throws {
+    public func insertOriginal(_ asset: Asset, contentSHA256: String) async throws {
         let hash = try Self.normalizedContentSHA256(contentSHA256)
         guard asset.fileSize > 0 else {
             throw CatalogError.invalidPersistedValue("content_byte_size")

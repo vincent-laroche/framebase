@@ -8,7 +8,7 @@ public enum ScreenshotContentIdentityError: Error, Equatable, LocalizedError, Se
     public var errorDescription: String? {
         switch self {
         case .duplicateContent:
-            "This screenshot is already in the Screenshots library."
+            "These original bytes are already in this library."
         case .invalidContentSHA256:
             "The screenshot content hash is not a SHA-256 digest."
         }

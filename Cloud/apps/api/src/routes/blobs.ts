@@ -1,7 +1,8 @@
 import { Hono, type Context } from 'hono';
-import { apiError, sha256Hex } from '../lib/api.js';
+import { apiError } from '../lib/api.js';
+import { sha256HexStream } from '../lib/sha256Stream.js';
 import { requireAuth } from '../middleware/auth.js';
-import { createR2Capability } from '../services/r2Capabilities.js';
+import { DEVELOPMENT_BLOB_BUCKET, createR2Capability, createR2UploadPartCapability } from '../services/r2Capabilities.js';
 import type { AppEnv } from '../types.js';
 
 export const blobsRouter = new Hono<AppEnv>();
@@ -9,9 +10,13 @@ export const blobsRouter = new Hono<AppEnv>();
 const SHA256 = /^[a-f0-9]{64}$/;
 const EXTENSION = /^[a-z0-9]{1,10}$/;
 const IMAGE_MEDIA_TYPE = /^image\/(avif|heic|heif|jpeg|png|tiff|webp)$/;
-const MAX_DIRECT_BYTES = 20 * 1024 * 1024;
+/** Originals at or under this size use one presigned PutObject. R2's single-part maximum is 5 GiB. */
+const MAX_SINGLE_PUT_BYTES = 5 * 1024 * 1024 * 1024;
+/** Multipart remains available above the historical 20 MiB floor, including objects past 5 GiB up to 5 TiB. */
+const MULTIPART_FLOOR_BYTES = 20 * 1024 * 1024;
 const MAX_MULTIPART_BYTES = 5 * 1024 * 1024 * 1024 * 1024;
 const MULTIPART_PART_BYTES = 8 * 1024 * 1024;
+const MAX_JSON_BYTES = 8 * 1024;
 
 interface BlobIntent {
   sha256?: string;
@@ -61,14 +66,29 @@ async function ensureBlob(
   return { status: existing?.upload_state === 'verified' ? 'verified' : 'pending', r2Key };
 }
 
+function rejectOriginalBody(c: Context<AppEnv>): Response | null {
+  const declared = c.req.header('content-length');
+  if (declared !== undefined && (!/^[0-9]+$/.test(declared) || Number(declared) > MAX_JSON_BYTES)) {
+    return apiError(
+      c,
+      413,
+      'DIRECT_R2_REQUIRED',
+      `Original bytes must be uploaded directly to ${DEVELOPMENT_BLOB_BUCKET}. This route accepts a small JSON record only.`
+    );
+  }
+  return null;
+}
+
 blobsRouter.post('/blobs/upload-initiate', requireAuth('assets.import'), async (c) => {
+  const oversized = rejectOriginalBody(c);
+  if (oversized) return oversized;
   let body: BlobIntent;
   try {
     body = await c.req.json();
   } catch {
     return apiError(c, 400, 'INVALID_REQUEST', 'Request body must be JSON');
   }
-  const intent = normalizedIntent(body, MAX_DIRECT_BYTES);
+  const intent = normalizedIntent(body, MAX_SINGLE_PUT_BYTES);
   if (!intent) {
     return apiError(c, 422, 'INVALID_BLOB_INTENT', 'Invalid fixture blob metadata');
   }
@@ -88,10 +108,12 @@ blobsRouter.post('/blobs/upload-initiate', requireAuth('assets.import'), async (
 });
 
 blobsRouter.post('/blobs/multipart/initiate', requireAuth('assets.import'), async (c) => {
+  const oversized = rejectOriginalBody(c);
+  if (oversized) return oversized;
   let body: BlobIntent;
   try { body = await c.req.json(); } catch { return apiError(c, 400, 'INVALID_REQUEST', 'Request body must be JSON'); }
   const intent = normalizedIntent(body, MAX_MULTIPART_BYTES);
-  if (!intent || intent.byteSize <= MAX_DIRECT_BYTES) {
+  if (!intent || intent.byteSize <= MULTIPART_FLOOR_BYTES) {
     return apiError(c, 422, 'INVALID_MULTIPART_INTENT', 'Multipart uploads require a valid original larger than the direct-upload limit');
   }
   const blob = await ensureBlob(c, intent);
@@ -123,34 +145,60 @@ blobsRouter.post('/blobs/multipart/initiate', requireAuth('assets.import'), asyn
   return c.json({ status: 'pending_upload', blobId: intent.sha256, uploadId: uploadID, partByteSize: MULTIPART_PART_BYTES, partCount, uploadedParts: [] });
 });
 
-blobsRouter.put('/blobs/multipart/:uploadId/parts/:partNumber', requireAuth('assets.import'), async (c) => {
+blobsRouter.put('/blobs/multipart/:uploadId/parts/:partNumber', requireAuth('assets.import'), (c) => {
+  return apiError(
+    c,
+    413,
+    'DIRECT_R2_REQUIRED',
+    `Upload this part with the presigned ${DEVELOPMENT_BLOB_BUCKET} URL. The Worker does not accept original bytes.`
+  );
+});
+
+blobsRouter.post('/blobs/multipart/:uploadId/parts/:partNumber/presign', requireAuth('assets.import'), async (c) => {
+  const oversized = rejectOriginalBody(c);
+  if (oversized) return oversized;
   const uploadID = c.req.param('uploadId');
   const partNumber = Number(c.req.param('partNumber'));
   if (!Number.isSafeInteger(partNumber) || partNumber < 1) return apiError(c, 422, 'INVALID_PART_NUMBER', 'Part number must be a positive integer');
   const upload = await c.env.DB.prepare(
-    `SELECT r2_key, r2_upload_id, device_id, byte_size, part_byte_size, part_count, status FROM multipart_uploads WHERE id = ?`
-  ).bind(uploadID).first<{ r2_key: string; r2_upload_id: string; device_id: string; byte_size: number; part_byte_size: number; part_count: number; status: string }>();
+    `SELECT r2_key, r2_upload_id, device_id, part_count, status FROM multipart_uploads WHERE id = ?`
+  ).bind(uploadID).first<{ r2_key: string; r2_upload_id: string; device_id: string; part_count: number; status: string }>();
+  if (!upload || upload.device_id !== c.get('deviceId')) return apiError(c, 404, 'MULTIPART_UPLOAD_NOT_FOUND', 'Multipart upload was not found');
+  if (upload.status !== 'active') return apiError(c, 409, 'MULTIPART_UPLOAD_NOT_ACTIVE', 'Multipart upload is no longer active');
+  if (partNumber > upload.part_count) return apiError(c, 422, 'INVALID_PART_NUMBER', 'Part number exceeds the upload manifest');
+  const capability = await createR2UploadPartCapability(c.env, upload.r2_key, upload.r2_upload_id, partNumber);
+  if (!capability) return apiError(c, 503, 'UPLOAD_CAPABILITY_UNAVAILABLE', 'Direct upload capability is not configured');
+  return c.json({ upload: capability });
+});
+
+blobsRouter.post('/blobs/multipart/:uploadId/parts/:partNumber/record', requireAuth('assets.import'), async (c) => {
+  const oversized = rejectOriginalBody(c);
+  if (oversized) return oversized;
+  let body: { etag?: string; byteSize?: number };
+  try { body = await c.req.json(); } catch { return apiError(c, 400, 'INVALID_REQUEST', 'Request body must be JSON'); }
+  const uploadID = c.req.param('uploadId');
+  const partNumber = Number(c.req.param('partNumber'));
+  const etag = body.etag?.trim();
+  if (!Number.isSafeInteger(partNumber) || partNumber < 1) return apiError(c, 422, 'INVALID_PART_NUMBER', 'Part number must be a positive integer');
+  if (!etag || etag.length > 128) return apiError(c, 422, 'INVALID_PART_ETAG', 'Part ETag is required');
+  const upload = await c.env.DB.prepare(
+    `SELECT device_id, byte_size, part_byte_size, part_count, status FROM multipart_uploads WHERE id = ?`
+  ).bind(uploadID).first<{ device_id: string; byte_size: number; part_byte_size: number; part_count: number; status: string }>();
   if (!upload || upload.device_id !== c.get('deviceId')) return apiError(c, 404, 'MULTIPART_UPLOAD_NOT_FOUND', 'Multipart upload was not found');
   if (upload.status !== 'active') return apiError(c, 409, 'MULTIPART_UPLOAD_NOT_ACTIVE', 'Multipart upload is no longer active');
   if (partNumber > upload.part_count) return apiError(c, 422, 'INVALID_PART_NUMBER', 'Part number exceeds the upload manifest');
   const expectedBytes = partNumber === upload.part_count
     ? upload.byte_size - upload.part_byte_size * (upload.part_count - 1)
     : upload.part_byte_size;
-  const bytes = await c.req.arrayBuffer();
-  if (bytes.byteLength !== expectedBytes) return apiError(c, 422, 'INVALID_PART_SIZE', 'Part bytes do not match the upload manifest');
-  try {
-    const part = await c.env.BLOBS.resumeMultipartUpload(upload.r2_key, upload.r2_upload_id).uploadPart(partNumber, bytes);
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO multipart_upload_parts (upload_id, part_number, etag, byte_size) VALUES (?, ?, ?, ?)
-         ON CONFLICT(upload_id, part_number) DO UPDATE SET etag = excluded.etag, byte_size = excluded.byte_size, created_at = datetime('now')`
-      ).bind(uploadID, part.partNumber, part.etag, bytes.byteLength),
-      c.env.DB.prepare("UPDATE multipart_uploads SET updated_at = datetime('now') WHERE id = ?").bind(uploadID)
-    ]);
-    return c.json({ uploadId: uploadID, partNumber: part.partNumber, etag: part.etag });
-  } catch {
-    return apiError(c, 409, 'MULTIPART_UPLOAD_EXPIRED', 'Multipart upload is no longer available; start a new one');
-  }
+  if (body.byteSize !== expectedBytes) return apiError(c, 422, 'INVALID_PART_SIZE', 'Part bytes do not match the upload manifest');
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO multipart_upload_parts (upload_id, part_number, etag, byte_size) VALUES (?, ?, ?, ?)
+       ON CONFLICT(upload_id, part_number) DO UPDATE SET etag = excluded.etag, byte_size = excluded.byte_size, created_at = datetime('now')`
+    ).bind(uploadID, partNumber, etag, expectedBytes),
+    c.env.DB.prepare("UPDATE multipart_uploads SET updated_at = datetime('now') WHERE id = ?").bind(uploadID)
+  ]);
+  return c.json({ uploadId: uploadID, partNumber, etag, byteSize: expectedBytes });
 });
 
 blobsRouter.post('/blobs/multipart/:uploadId/complete', requireAuth('assets.import'), async (c) => {
@@ -218,6 +266,8 @@ blobsRouter.post('/blobs/multipart/:uploadId/confirm', requireAuth('assets.impor
 });
 
 blobsRouter.post('/blobs/upload-complete', requireAuth('assets.import'), async (c) => {
+  const oversized = rejectOriginalBody(c);
+  if (oversized) return oversized;
   let body: { sha256?: string; byteSize?: number };
   try {
     body = await c.req.json();
@@ -238,15 +288,21 @@ blobsRouter.post('/blobs/upload-complete', requireAuth('assets.import'), async (
   if (blob.upload_state === 'verified') return c.json({ status: 'already_verified', blobId: sha256, size: blob.byte_size });
 
   const object = await c.env.BLOBS.get(blob.r2_key);
-  if (!object) return apiError(c, 422, 'R2_OBJECT_MISSING', 'Uploaded object is missing');
+  if (!object?.body) return apiError(c, 422, 'R2_OBJECT_MISSING', 'Uploaded object is missing');
 
-  const bytes = await object.arrayBuffer();
-  const actualDigest = await sha256Hex(bytes);
-  const valid =
+  const metadataMatches =
     object.size === blob.byte_size &&
     body.byteSize === blob.byte_size &&
-    object.httpMetadata?.contentType === blob.media_type &&
-    actualDigest === sha256;
+    object.httpMetadata?.contentType === blob.media_type;
+  if (!metadataMatches) {
+    await object.body.cancel();
+    await c.env.BLOBS.delete(blob.r2_key);
+    await c.env.DB.prepare("UPDATE blobs SET upload_state = 'abandoned' WHERE sha256 = ?").bind(sha256).run();
+    return apiError(c, 422, 'BLOB_VERIFICATION_FAILED', 'Uploaded bytes do not match the initiated blob');
+  }
+
+  const actualDigest = await sha256HexStream(object.body);
+  const valid = actualDigest === sha256;
   if (!valid) {
     await c.env.BLOBS.delete(blob.r2_key);
     await c.env.DB.prepare("UPDATE blobs SET upload_state = 'abandoned' WHERE sha256 = ?").bind(sha256).run();

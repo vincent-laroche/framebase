@@ -77,7 +77,7 @@
     },
     "/v1/blobs/upload-initiate": {
       "post": {
-        "summary": "Initiate a signed direct fixture upload",
+        "summary": "Initiate one presigned PutObject into framebase-blobs-dev for an original up to 5 GiB",
         "security": [
           {
             "bearerAuth": []
@@ -103,7 +103,19 @@
     },
     "/v1/blobs/multipart/{uploadId}/parts/{partNumber}": {
       "put": {
-        "summary": "Upload one bounded authenticated multipart part",
+        "summary": "Refuse original bytes on the Worker. Use the presigned part URL instead.",
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/v1/blobs/multipart/{uploadId}/parts/{partNumber}/presign": {
+      "post": {
+        "summary": "Sign one direct R2 UploadPart URL for framebase-blobs-dev",
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/v1/blobs/multipart/{uploadId}/parts/{partNumber}/record": {
+      "post": {
+        "summary": "Record the ETag from a direct R2 part upload without accepting part bytes",
         "security": [{ "bearerAuth": [] }]
       }
     },

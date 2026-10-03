@@ -4,6 +4,9 @@ import FramebaseDomain
 
 public enum FramebaseCLIError: LocalizedError, Equatable, Sendable {
     case missingCommand
+    case missingLibraryPath
+    case missingLibrarySpace
+    case missingReceiveSource
     case unsupportedCommand(String)
     case missingCatalogPath
     case missingSearchText
@@ -21,7 +24,10 @@ public enum FramebaseCLIError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .missingCommand: "Choose diagnostics, list-folders, search, inspect, agent, proposal, apply, get-operation, or ingest-screenshots."
+        case .missingCommand: "Choose diagnostics, list-folders, search, inspect, agent, proposal, apply, get-operation, ingest-screenshots, or receive-originals."
+        case .missingLibraryPath: "Pass --library followed by a .framebase package."
+        case .missingLibrarySpace: "Pass --space personal, hairSolutions, or screenshots."
+        case .missingReceiveSource: "Pass at least one image file or directory to receive."
         case let .unsupportedCommand(command): "Unsupported command: \(command)."
         case .missingCatalogPath: "Pass --catalog followed by a catalog.sqlite path."
         case .missingSearchText: "Pass --text followed by a search value."
@@ -56,8 +62,9 @@ public enum FramebaseCLI {
       framebase get-operation --catalog /path/to/catalog.sqlite --operation UUID
       framebase apply --catalog /path/to/catalog.sqlite --agent UUID --operation UUID --approval OPAQUE_TOKEN
       framebase ingest-screenshots [--library "/path/to/Screenshots Library.framebase"] [--inbox "/path/to/Framebase Screenshot Inbox"]
+      framebase receive-originals --library "/path/to/Personal Library.framebase" --space personal|hairSolutions|screenshots [--api https://framebase-api-dev.notionsync.workers.dev --token TOKEN] <file-or-directory>...
 
-    Mutations other than screenshot intake are proposal-first. Create an explicit local agent identity
+    Mutations other than screenshot intake and original receive are proposal-first. Create an explicit local agent identity
     first; `proposal tag` changes no organization and returns a short-lived
     opaque approval token bound to that identity; `apply` requires that exact
     token, identity, and an unchanged logical snapshot. The CLI never exposes
@@ -65,12 +72,18 @@ public enum FramebaseCLI {
     `ingest-screenshots` copies new files into the Screenshots library only,
     stores local Apple Vision OCR text, and leaves the dropped files in place.
     The same screenshot bytes are never imported twice.
+    `receive-originals` copies image originals into the library named by --space
+    and can store those bytes directly in the development bucket framebase-blobs-dev.
+    The same original bytes are never imported or uploaded twice. Source files stay in place.
     """
 
     public static func execute(arguments: [String]) async throws -> String {
         if arguments == ["--help"] || arguments == ["help"] { return usage }
         if arguments.first == "ingest-screenshots" {
             return try await ingestScreenshots(arguments: Array(arguments.dropFirst()))
+        }
+        if arguments.first == "receive-originals" {
+            return try await receiveOriginals(arguments: Array(arguments.dropFirst()))
         }
         let command = try Command(arguments: arguments)
         let catalog = try CatalogDatabase(catalogURL: command.catalogURL)

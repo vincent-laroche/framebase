@@ -136,13 +136,40 @@ describe('blob upload verification', () => {
     }, env);
     expect((await resumed.json<{ uploadId: string }>()).uploadId).toBe(manifest.uploadId);
 
+    const stored = await env.DB.prepare(
+      'SELECT r2_key, r2_upload_id FROM multipart_uploads WHERE id = ?'
+    ).bind(manifest.uploadId).first<{ r2_key: string; r2_upload_id: string }>();
+    expect(stored?.r2_key.startsWith('blobs/sha256/')).toBe(true);
+
+    const refused = await app.request(`/v1/blobs/multipart/${manifest.uploadId}/parts/1`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: bytes.slice(0, 16)
+    }, env);
+    expect(refused.status).toBe(413);
+    expect((await refused.json<{ error: { code: string } }>()).error.code).toBe('DIRECT_R2_REQUIRED');
+
     for (let partNumber = 1; partNumber <= manifest.partCount; partNumber += 1) {
       const offset = (partNumber - 1) * partSize;
       const end = Math.min(offset + partSize, bytes.byteLength);
-      const uploaded = await app.request(`/v1/blobs/multipart/${manifest.uploadId}/parts/${partNumber}`, {
-        method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: bytes.slice(offset, end)
+      const presign = await app.request(`/v1/blobs/multipart/${manifest.uploadId}/parts/${partNumber}/presign`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }
       }, env);
-      expect(uploaded.status).toBe(200);
+      expect(presign.status).toBe(200);
+      const signed = await presign.json<{ upload: { url: string; method: string } }>();
+      const partURL = new URL(signed.upload.url);
+      expect(signed.upload.method).toBe('PUT');
+      expect(partURL.host).toBe('test-account-id.r2.cloudflarestorage.com');
+      expect(partURL.pathname.startsWith('/framebase-blobs-dev/blobs/sha256/')).toBe(true);
+      expect(partURL.searchParams.get('partNumber')).toBe(String(partNumber));
+      expect(partURL.searchParams.get('uploadId')).toBe(stored!.r2_upload_id);
+      expect(partURL.host).not.toContain('workers.dev');
+      const partBytes = bytes.slice(offset, end);
+      const uploaded = await env.BLOBS.resumeMultipartUpload(stored!.r2_key, stored!.r2_upload_id).uploadPart(partNumber, partBytes);
+      const recorded = await app.request(`/v1/blobs/multipart/${manifest.uploadId}/parts/${partNumber}/record`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ etag: uploaded.etag, byteSize: partBytes.byteLength })
+      }, env);
+      expect(recorded.status).toBe(200);
     }
 
     const completed = await app.request(`/v1/blobs/multipart/${manifest.uploadId}/complete`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }, env);
@@ -177,5 +204,115 @@ describe('blob upload verification', () => {
       body: JSON.stringify({ sha256: digest, byteSize: bytes.byteLength })
     }, env);
     expect(complete.status).toBe(422);
+  });
+
+  it('stores one original in framebase-blobs-dev and does not duplicate a second upload of the same bytes', async () => {
+    const token = await enrollDevice(env, 'device-receive-original', ['assets.import', 'originals.download']);
+    const bytes = new TextEncoder().encode('personal-original');
+    const digest = await sha256(bytes);
+    const intent = { sha256: digest, byteSize: bytes.byteLength, mediaType: 'image/jpeg', originalExtension: 'jpg' };
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+    const initiate = await app.request('/v1/blobs/upload-initiate', {
+      method: 'POST', headers, body: JSON.stringify(intent)
+    }, env);
+    expect(initiate.status).toBe(200);
+    const initiated = await initiate.json<{ status: string; blobId: string; upload: { url: string; method: string } }>();
+    expect(initiated.status).toBe('pending_upload');
+    expect(initiated.blobId).toBe(digest);
+    const uploadURL = new URL(initiated.upload.url);
+    expect(initiated.upload.method).toBe('PUT');
+    expect(uploadURL.host).toBe('test-account-id.r2.cloudflarestorage.com');
+    expect(uploadURL.pathname).toBe(`/framebase-blobs-dev/blobs/sha256/${digest.slice(0, 2)}/${digest}.jpg`);
+    expect(uploadURL.host).not.toContain('workers.dev');
+
+    const row = await env.DB.prepare('SELECT r2_key, upload_state FROM blobs WHERE sha256 = ?')
+      .bind(digest).first<{ r2_key: string; upload_state: string }>();
+    expect(row?.upload_state).toBe('pending');
+    expect(row?.r2_key).toBe(`blobs/sha256/${digest.slice(0, 2)}/${digest}.jpg`);
+    await env.BLOBS.put(row!.r2_key, bytes, { httpMetadata: { contentType: 'image/jpeg' } });
+
+    const complete = await app.request('/v1/blobs/upload-complete', {
+      method: 'POST', headers, body: JSON.stringify({ sha256: digest, byteSize: bytes.byteLength })
+    }, env);
+    expect(complete.status).toBe(200);
+    expect((await complete.json<{ status: string }>()).status).toBe('verified');
+
+    const again = await app.request('/v1/blobs/upload-initiate', {
+      method: 'POST', headers, body: JSON.stringify(intent)
+    }, env);
+    expect(again.status).toBe(200);
+    const repeated = await again.json<{ status: string; upload?: { url: string } }>();
+    expect(repeated.status).toBe('already_verified');
+    expect(repeated.upload).toBeUndefined();
+
+    const blobs = await env.DB.prepare('SELECT COUNT(*) AS count FROM blobs WHERE sha256 = ?')
+      .bind(digest).first<{ count: number }>();
+    expect(blobs?.count).toBe(1);
+    expect((await env.BLOBS.head(row!.r2_key))?.size).toBe(bytes.byteLength);
+
+    const assetID = 'receive-asset-one';
+    const mutation = () => app.request('/v1/mutations', {
+      method: 'POST',
+      headers: { ...headers, 'Idempotency-Key': `receive-asset-${assetID}` },
+      body: JSON.stringify({
+        operations: [{
+          type: 'create_asset',
+          targetId: assetID,
+          payload: {
+            blobId: digest,
+            folderId: 'system-inbox',
+            displayName: 'Original',
+            assetMetadata: { librarySpace: 'personal', mediaType: 'stillImage' }
+          }
+        }]
+      })
+    }, env);
+    const created = await mutation();
+    expect(created.status).toBe(200);
+    const createdBody = await created.json();
+    const replayed = await mutation();
+    expect(replayed.status).toBe(200);
+    expect(await replayed.json()).toEqual(createdBody);
+    const assets = await env.DB.prepare('SELECT COUNT(*) AS count FROM assets WHERE blob_id = ?')
+      .bind(digest).first<{ count: number }>();
+    expect(assets?.count).toBe(1);
+  });
+
+  it('presigns a single direct upload past the Worker body cap and below 5 GiB', async () => {
+    const token = await enrollDevice(env, 'device-large-original', ['assets.import']);
+    const digest = 'ab'.repeat(32);
+    const initiate = await app.request('/v1/blobs/upload-initiate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sha256: digest, byteSize: 100 * 1024 * 1024, mediaType: 'image/jpeg', originalExtension: 'jpg' })
+    }, env);
+    expect(initiate.status).toBe(200);
+    const body = await initiate.json<{ upload: { url: string } }>();
+    const uploadURL = new URL(body.upload.url);
+    expect(uploadURL.host.endsWith('.r2.cloudflarestorage.com')).toBe(true);
+    expect(uploadURL.pathname.startsWith('/framebase-blobs-dev/')).toBe(true);
+
+    const tooLargeForOnePart = await app.request('/v1/blobs/upload-initiate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sha256: 'cd'.repeat(32), byteSize: 5 * 1024 * 1024 * 1024 + 1, mediaType: 'image/jpeg', originalExtension: 'jpg' })
+    }, env);
+    expect(tooLargeForOnePart.status).toBe(422);
+  });
+
+  it('refuses an original posted as the Worker JSON body', async () => {
+    const token = await enrollDevice(env, 'device-body-cap', ['assets.import']);
+    const response = await app.request('/v1/blobs/upload-complete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Length': String(9 * 1024)
+      },
+      body: JSON.stringify({ sha256: 'a'.repeat(64), byteSize: 1 })
+    }, env);
+    expect(response.status).toBe(413);
+    expect((await response.json<{ error: { code: string } }>()).error.code).toBe('DIRECT_R2_REQUIRED');
   });
 });
