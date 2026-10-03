@@ -133,10 +133,15 @@ Before/after matching has a second local relationship record: `candidate`, `conf
 - [ ] Version the dataset manifest, feature definition, model, rubric, and evaluation scorecard. Keep a model card describing intended use, exclusions, known failure modes, and rollback.
 - [ ] Promote only after holdout performance meets the agreed threshold and blind human review confirms the queue is useful.
 
+## Screenshot intake boundary
+
+Daily screenshot intake reuses this local Apple Vision OCR path. It stores recognized text on a Screenshots-library asset and does not add a cloud vision call, embedding, semantic search, or remote workflow. The receiving command and Shortcut steps are in `docs/SCREENSHOT_INTAKE.md`. Analysis still does not tag, move, or album the asset.
+
 ## Exit Checklist
 
 - [x] No executable face detection or identity recognition exists in Phase 6 sources.
 - [x] OCR, barcode, and document results are local, provenance-rich, bounded, and non-destructive.
+- [x] Screenshot intake reuses local Apple Vision OCR only. It does not add a cloud vision call, embedding, or semantic search.
 - [x] Every visual assessment is clearly labeled as provider advice or a human decision.
 - [x] Before/after and hairline presentation are reviewable attributes, not automated organization or biometric recognition.
 - [ ] Claude Sonnet integration has a pinned revision, approved privacy/cost controls, synthetic proof, and redacted logs before any real-photo use.

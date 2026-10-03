@@ -17,7 +17,8 @@ public enum FramebaseCatalogFoundation {
     public static let workflowCLIApprovalMigrationIdentifier = "v11_workflow_cli_approvals"
     public static let workflowUndoMigrationIdentifier = "v12_workflow_undo_effects"
     public static let agentIdentityMigrationIdentifier = "v13_agent_identities"
-    public static let currentSchemaVersion = 13
+    public static let contentIdentityMigrationIdentifier = "v14_asset_content_identity"
+    public static let currentSchemaVersion = 14
 
     public static func configure(_ configuration: inout Configuration) {
         configuration.foreignKeysEnabled = true
@@ -702,6 +703,21 @@ public final class CatalogDatabase: Sendable {
                 CREATE INDEX workflow_audit_events_actor_identity_index ON workflow_audit_events(actor_identity_id, captured_at_ms ASC);
                 """)
             try db.execute(sql: "UPDATE catalog_settings SET value = '13', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
+        }
+        migrator.registerMigration(FramebaseCatalogFoundation.contentIdentityMigrationIdentifier) { db in
+            try db.execute(sql: """
+                CREATE TABLE asset_content_identity (
+                    sha256 TEXT PRIMARY KEY NOT NULL CHECK(
+                        length(sha256) = 64
+                        AND sha256 = lower(sha256)
+                        AND sha256 NOT GLOB '*[^0-9a-f]*'
+                    ),
+                    asset_id TEXT NOT NULL UNIQUE REFERENCES assets(id) ON DELETE CASCADE CHECK(asset_id = lower(asset_id) AND length(asset_id) = 36),
+                    byte_size INTEGER NOT NULL CHECK(byte_size > 0),
+                    recorded_at_ms INTEGER NOT NULL
+                );
+                """)
+            try db.execute(sql: "UPDATE catalog_settings SET value = '14', updated_at_ms = ? WHERE key = 'schema_version'", arguments: [CatalogDate.milliseconds(Date())])
         }
         return migrator
     }

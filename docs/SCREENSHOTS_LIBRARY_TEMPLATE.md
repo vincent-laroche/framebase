@@ -12,6 +12,8 @@ Hair Solutions keeps `09_reference/ops-screenshots` as business reference materi
 - `discard` is where obsolete noise is moved so the live library does not have to keep today's pile.
 - Applying the template creates empty folders and controlled tags. It does not import files.
 
+New screenshots enter through the local inbox and `framebase ingest-screenshots`, documented in `docs/SCREENSHOT_INTAKE.md`. That command writes only this library, stores local Apple Vision OCR text, and does not read iCloud Photos.
+
 ## Folder tree
 
 ```text

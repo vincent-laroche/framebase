@@ -12,7 +12,7 @@ Framebase is no longer constrained to one library package on a Mac. Each `.frame
 | --- | --- | --- | --- | --- |
 | Personal | Personal Library | Existing `~/Pictures/Framebase Library.framebase` (retained until a separately reviewed rename) | 1,602 personal still-image originals | Dedicated private production target, not `framebase-blobs-dev` |
 | Business | HSC Library | `~/Pictures/HSC Library.framebase` | Empty until Vincent selects an HSC image source | Dedicated private production target, distinct from Personal |
-| Screenshots | Screenshots Library | `~/Pictures/Screenshots Library.framebase` | Empty until Vincent chooses a screenshots source | Dedicated private production target, distinct from Personal and HSC |
+| Screenshots | Screenshots Library | `~/Pictures/Screenshots Library.framebase` | Empty until files arrive in the local inbox (`docs/SCREENSHOT_INTAKE.md`). That inbox is not iCloud Photos. | Dedicated private production target, distinct from Personal and HSC |
 
 The existing package is registered as **Personal Library** by display name without moving its originals. The HSC and Screenshots packages start empty; Framebase must not infer or copy images from another project folder. Screenshots are not a tag or folder inside Personal. The Hair Solutions folder `09_reference/ops-screenshots` remains business reference material inside the HSC template.
 
@@ -48,7 +48,15 @@ The existing package is registered as **Personal Library** by display name witho
 - [x] Apply a template only inside its own library space, through the existing review sheet. Tags stay `namespace:value` and do not replace folder membership.
 - [x] Reject catalog-ID mismatches, unavailable package paths, and attempts to retarget a library from one space to another.
 
-### 4. Separate production cloud onboarding
+### 4. Screenshots inbox
+
+- [x] `framebase ingest-screenshots` copies an explicit local inbox into the Screenshots catalog only, stores local Apple Vision OCR text, and leaves the dropped files in place.
+- [x] The same original bytes stay one asset, including a second filename or a later daily pass.
+- [x] Personal, Hair Solutions, and any other package refuse the intake and stay empty.
+
+This slice does not read or delete iCloud Photos, upload a personal archive, or call a cloud vision API.
+
+### 5. Separate production cloud onboarding
 
 - [ ] Design three private production environments: Personal, HSC, and Screenshots. Do not use the development bucket/database for any library's real media.
 - [ ] For each library, require a separate, purpose-specific device enrollment and storage/control-plane namespace. Do not issue one credential that reaches another library.
@@ -62,10 +70,11 @@ The existing package is registered as **Personal Library** by display name witho
 - [x] Terminal-build the macOS app and terminal-run focused creation/registration coverage for library creation and switching.
 - [x] Verify Personal and HSC catalog IDs differ, both preserve an Inbox, HSC begins empty, and no original storage key appears in both packages. Screenshots uses the same isolation rule.
 - [x] Verify no production cloud resource or personal/HSC image transfer is created by this local-library slice.
+- [x] Package test: one dropped screenshot becomes one Screenshots-library asset with local OCR text, and a second drop of the same bytes does not duplicate it. Personal and Hair Solutions stay empty.
 
 ## Explicit deferred decisions
 
 - The existing package pathname is not renamed yet.
-- No HSC or Screenshots source directory has been selected.
+- Screenshots intake reads only the local inbox in `docs/SCREENSHOT_INTAKE.md`. It does not read iCloud Photos. No HSC source directory has been selected.
 - No Personal, HSC, or Screenshots production Cloudflare resource exists yet.
 - No local originals are deleted, including after a successful cloud upload, without a separate retention/deletion approval.
