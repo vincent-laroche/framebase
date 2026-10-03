@@ -3,6 +3,8 @@ import type { Bindings } from '../types.js';
 
 const CAPABILITY_LIFETIME_SECONDS = 15 * 60;
 
+export const DEVELOPMENT_BLOB_BUCKET = 'framebase-blobs-dev';
+
 export interface R2Capability {
   url: string;
   method: 'GET' | 'PUT';
@@ -22,7 +24,7 @@ export async function createR2Capability(
 ): Promise<R2Capability | null> {
   if (!configured(env)) return null;
 
-  const bucketName = env.R2_BUCKET_NAME ?? 'framebase-blobs-dev';
+  const bucketName = env.R2_BUCKET_NAME ?? DEVELOPMENT_BLOB_BUCKET;
   const url = new URL(`https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${bucketName}/${key}`);
   url.searchParams.set('X-Amz-Expires', String(CAPABILITY_LIFETIME_SECONDS));
 
@@ -41,5 +43,30 @@ export async function createR2Capability(
     method,
     expiresAt,
     ...(method === 'PUT' && mediaType ? { requiredHeaders: { 'Content-Type': mediaType } } : {})
+  };
+}
+
+/** Signs one UploadPart against the private development bucket. The part bytes never enter the Worker. */
+export async function createR2UploadPartCapability(
+  env: Bindings,
+  key: string,
+  uploadId: string,
+  partNumber: number
+): Promise<R2Capability | null> {
+  if (!configured(env)) return null;
+  const bucketName = env.R2_BUCKET_NAME ?? DEVELOPMENT_BLOB_BUCKET;
+  const url = new URL(`https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${bucketName}/${key}`);
+  url.searchParams.set('partNumber', String(partNumber));
+  url.searchParams.set('uploadId', uploadId);
+  url.searchParams.set('X-Amz-Expires', String(CAPABILITY_LIFETIME_SECONDS));
+  const client = new AwsClient({
+    accessKeyId: env.R2_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_SECRET_ACCESS_KEY
+  });
+  const signed = await client.sign(new Request(url, { method: 'PUT' }), { aws: { signQuery: true } });
+  return {
+    url: signed.url,
+    method: 'PUT',
+    expiresAt: new Date(Date.now() + CAPABILITY_LIFETIME_SECONDS * 1000).toISOString()
   };
 }

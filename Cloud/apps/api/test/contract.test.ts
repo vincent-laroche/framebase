@@ -15,6 +15,8 @@ const DOCUMENTED_ROUTE_METHODS: Record<string, string[]> = {
   '/v1/blobs/upload-complete': ['post'],
   '/v1/blobs/multipart/initiate': ['post'],
   '/v1/blobs/multipart/{uploadId}/parts/{partNumber}': ['put'],
+  '/v1/blobs/multipart/{uploadId}/parts/{partNumber}/presign': ['post'],
+  '/v1/blobs/multipart/{uploadId}/parts/{partNumber}/record': ['post'],
   '/v1/blobs/multipart/{uploadId}/complete': ['post'],
   '/v1/blobs/multipart/{uploadId}/confirm': ['post'],
   '/v1/blobs/{id}/download': ['get'],

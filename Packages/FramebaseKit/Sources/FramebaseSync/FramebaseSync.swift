@@ -100,7 +100,7 @@ public actor FramebaseSync {
         catalog: CatalogDatabase,
         blobStore: any AssetBlobStore,
         api: any FramebaseSyncAPI,
-        directUploadLimit: Int64 = 20 * 1_024 * 1_024
+        directUploadLimit: Int64 = OriginalR2Endpoint.singlePutMaximumBytes
     ) {
         self.catalog = catalog
         self.blobStore = blobStore
@@ -139,9 +139,9 @@ public actor FramebaseSync {
         return try await catalog.cloud.migrationManifest()
     }
 
-    /// Uploads each verified original through either the bounded direct path or
-    /// the resumable multipart path. Both paths preserve the Phase 1 storage key
-    /// and leave its managed local original in place after cloud verification.
+    /// Uploads each verified original directly to R2. A single presigned PUT covers
+    /// originals through 5 GiB. Larger originals use presigned multipart parts.
+    /// Both paths leave the managed local original in place after verification.
     public func uploadVerifiedLocalBlobs() async throws {
         let manifest = try await catalog.cloud.migrationManifest()
         for entry in manifest {
@@ -399,9 +399,8 @@ public actor FramebaseSync {
     private func uploadDirect(intent: RemoteBlobIntent, originalURL: URL) async throws -> String {
         let initiation = try await api.initiateUpload(intent)
         if initiation.status != "already_verified", let capability = initiation.upload {
-            let data = try Data(contentsOf: originalURL, options: [.mappedIfSafe])
-            guard Self.sha256(of: data) == intent.sha256 else { throw FramebaseSyncError.remoteVerificationFailed(intent.sha256) }
-            try await api.upload(data, using: capability)
+            try OriginalR2Endpoint.requireDevelopmentBucket(capability.url)
+            try await api.uploadFile(originalURL, using: capability)
             try await api.completeUpload(sha256: intent.sha256, byteSize: intent.byteSize)
         }
         return initiation.blobID
@@ -425,7 +424,10 @@ public actor FramebaseSync {
                 : partByteSize
             let data = try handle.read(upToCount: expectedByteCount) ?? Data()
             guard data.count == expectedByteCount else { throw FramebaseSyncError.remoteVerificationFailed(intent.sha256) }
-            _ = try await api.uploadMultipartPart(data, uploadID: uploadID, partNumber: partNumber)
+            let capability = try await api.presignMultipartPart(uploadID: uploadID, partNumber: partNumber)
+            try OriginalR2Endpoint.requireDevelopmentBucket(capability.url)
+            let etag = try await api.uploadPresignedPart(data, using: capability)
+            try await api.recordMultipartPart(uploadID: uploadID, partNumber: partNumber, etag: etag, byteSize: Int64(data.count))
         }
         _ = try await api.completeMultipartUpload(uploadID: uploadID)
         let capability = try await api.verificationDownloadCapability(blobID: intent.sha256)

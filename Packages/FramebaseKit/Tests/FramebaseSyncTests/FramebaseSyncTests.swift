@@ -348,9 +348,13 @@ private actor FixtureSyncAPI: FramebaseSyncAPI {
         ChangeFeedPage(events: changeEvents.filter { $0.revision > cursor }.sorted { $0.revision < $1.revision })
     }
     func upload(_ data: Data, using capability: DirectTransferCapability) async throws { throw CocoaError(.fileWriteUnknown) }
+    func uploadFile(_ fileURL: URL, using capability: DirectTransferCapability) async throws { throw CocoaError(.fileWriteUnknown) }
     func completeUpload(sha256: String, byteSize: Int64) async throws { throw CocoaError(.fileWriteUnknown) }
     func initiateMultipartUpload(_ intent: RemoteBlobIntent) async throws -> MultipartUploadInitiation { throw CocoaError(.fileWriteUnknown) }
     func uploadMultipartPart(_ data: Data, uploadID: String, partNumber: Int) async throws -> MultipartUploadedPart { throw CocoaError(.fileWriteUnknown) }
+    func presignMultipartPart(uploadID: String, partNumber: Int) async throws -> DirectTransferCapability { throw CocoaError(.fileWriteUnknown) }
+    func uploadPresignedPart(_ data: Data, using capability: DirectTransferCapability) async throws -> String { throw CocoaError(.fileWriteUnknown) }
+    func recordMultipartPart(uploadID: String, partNumber: Int, etag: String, byteSize: Int64) async throws { throw CocoaError(.fileWriteUnknown) }
     func completeMultipartUpload(uploadID: String) async throws -> MultipartUploadCompletion { throw CocoaError(.fileWriteUnknown) }
     func verificationDownloadCapability(blobID: String) async throws -> DirectTransferCapability { throw CocoaError(.fileWriteUnknown) }
     func confirmMultipartUpload(uploadID: String, sha256: String, byteSize: Int64) async throws { throw CocoaError(.fileWriteUnknown) }

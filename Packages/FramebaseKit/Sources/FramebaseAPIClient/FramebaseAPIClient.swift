@@ -274,9 +274,13 @@ public enum CloudDerivativeVariant: String, CaseIterable, Sendable {
 public protocol FramebaseSyncAPI: Sendable {
     func initiateUpload(_ intent: RemoteBlobIntent) async throws -> UploadInitiation
     func upload(_ data: Data, using capability: DirectTransferCapability) async throws
+    func uploadFile(_ fileURL: URL, using capability: DirectTransferCapability) async throws
     func completeUpload(sha256: String, byteSize: Int64) async throws
     func initiateMultipartUpload(_ intent: RemoteBlobIntent) async throws -> MultipartUploadInitiation
     func uploadMultipartPart(_ data: Data, uploadID: String, partNumber: Int) async throws -> MultipartUploadedPart
+    func presignMultipartPart(uploadID: String, partNumber: Int) async throws -> DirectTransferCapability
+    func uploadPresignedPart(_ data: Data, using capability: DirectTransferCapability) async throws -> String
+    func recordMultipartPart(uploadID: String, partNumber: Int, etag: String, byteSize: Int64) async throws
     func completeMultipartUpload(uploadID: String) async throws -> MultipartUploadCompletion
     func verificationDownloadCapability(blobID: String) async throws -> DirectTransferCapability
     func confirmMultipartUpload(uploadID: String, sha256: String, byteSize: Int64) async throws
@@ -353,17 +357,25 @@ public actor FramebaseAPIClient: FramebaseSyncAPI {
     }
 
     public func upload(_ data: Data, using capability: DirectTransferCapability) async throws {
+        _ = try await uploadPresigned(data, using: capability)
+    }
+
+    public func uploadFile(_ fileURL: URL, using capability: DirectTransferCapability) async throws {
+        try Self.requireDevelopmentBucket(capability.url)
         guard capability.expiresAt > Date() else {
             throw FramebaseAPIError(statusCode: 410, code: "CAPABILITY_EXPIRED", message: "Upload capability expired")
         }
         var request = URLRequest(url: capability.url, timeoutInterval: configuration.requestTimeout)
         request.httpMethod = capability.method
         for (key, value) in capability.headers ?? [:] { request.setValue(value, forHTTPHeaderField: key) }
-        request.httpBody = data
-        let (_, response) = try await urlSession.data(for: request)
+        let (_, response) = try await urlSession.upload(for: request, fromFile: fileURL)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw FramebaseAPIError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0, code: "DIRECT_UPLOAD_FAILED", message: "Direct upload failed")
         }
+    }
+
+    public func uploadPresignedPart(_ data: Data, using capability: DirectTransferCapability) async throws -> String {
+        try await uploadPresigned(data, using: capability)
     }
 
     public func completeUpload(sha256: String, byteSize: Int64) async throws {
@@ -379,10 +391,33 @@ public actor FramebaseAPIClient: FramebaseSyncAPI {
     }
 
     public func uploadMultipartPart(_ data: Data, uploadID: String, partNumber: Int) async throws -> MultipartUploadedPart {
-        var request = try await request(path: "v1/blobs/multipart/\(uploadID)/parts/\(partNumber)", method: "PUT", authenticated: true)
-        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        request.httpBody = data
-        return try await perform(request, decode: MultipartUploadedPart.self)
+        _ = data
+        _ = uploadID
+        _ = partNumber
+        throw FramebaseAPIError(
+            statusCode: 413,
+            code: "DIRECT_R2_REQUIRED",
+            message: "Original bytes upload directly to \(OriginalR2Endpoint.bucketName). Request a presigned part URL."
+        )
+    }
+
+    public func presignMultipartPart(uploadID: String, partNumber: Int) async throws -> DirectTransferCapability {
+        let request = try await request(
+            path: "v1/blobs/multipart/\(uploadID)/parts/\(partNumber)/presign",
+            method: "POST",
+            authenticated: true
+        )
+        return try await perform(request, decode: PresignedPartResponse.self).upload
+    }
+
+    public func recordMultipartPart(uploadID: String, partNumber: Int, etag: String, byteSize: Int64) async throws {
+        var request = try await request(
+            path: "v1/blobs/multipart/\(uploadID)/parts/\(partNumber)/record",
+            method: "POST",
+            authenticated: true
+        )
+        request.httpBody = try encoder.encode(PartRecord(etag: etag, byteSize: byteSize))
+        _ = try await perform(request, decode: MultipartUploadedPart.self)
     }
 
     public func completeMultipartUpload(uploadID: String) async throws -> MultipartUploadCompletion {
@@ -520,6 +555,38 @@ public actor FramebaseAPIClient: FramebaseSyncAPI {
         return data
     }
 
+    private func uploadPresigned(_ data: Data, using capability: DirectTransferCapability) async throws -> String {
+        try Self.requireDevelopmentBucket(capability.url)
+        guard capability.expiresAt > Date() else {
+            throw FramebaseAPIError(statusCode: 410, code: "CAPABILITY_EXPIRED", message: "Upload capability expired")
+        }
+        var request = URLRequest(url: capability.url, timeoutInterval: configuration.requestTimeout)
+        request.httpMethod = capability.method
+        for (key, value) in capability.headers ?? [:] { request.setValue(value, forHTTPHeaderField: key) }
+        let (_, response) = try await urlSession.upload(for: request, from: data)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw FramebaseAPIError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0, code: "DIRECT_UPLOAD_FAILED", message: "Direct upload failed")
+        }
+        guard let etag = http.value(forHTTPHeaderField: "ETag"), !etag.isEmpty else {
+            throw FramebaseAPIError(statusCode: http.statusCode, code: "DIRECT_UPLOAD_FAILED", message: "Direct upload did not return an ETag")
+        }
+        return etag
+    }
+
+    nonisolated static func requireDevelopmentBucket(_ url: URL) throws {
+        guard url.scheme == "https",
+              let host = url.host?.lowercased(),
+              host.hasSuffix(".r2.cloudflarestorage.com"),
+              url.path.split(separator: "/").first.map(String.init) == OriginalR2Endpoint.bucketName
+        else {
+            throw FramebaseAPIError(
+                statusCode: 413,
+                code: "DIRECT_R2_REQUIRED",
+                message: "Original bytes upload only to \(OriginalR2Endpoint.bucketName)"
+            )
+        }
+    }
+
     private static func sha256(of url: URL) throws -> (sha256: String, byteSize: Int64) {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
@@ -552,6 +619,8 @@ private struct UploadCompletionRequest: Codable {
     let byteSize: Int64
 }
 private struct UploadCompletionResponse: Codable { let status: String }
+private struct PresignedPartResponse: Decodable { let upload: DirectTransferCapability }
+private struct PartRecord: Encodable { let etag: String; let byteSize: Int64 }
 private struct DownloadResponse: Codable { let download: DirectTransferCapability }
 private struct APIErrorEnvelope: Codable { let error: APIErrorBody }
 private struct APIErrorBody: Codable { let code: String; let message: String; let requestID: String? }
