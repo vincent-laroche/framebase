@@ -88,7 +88,7 @@ public actor LibraryOriginalReceive {
             }
             return
         }
-        guard FramebaseLibraryPackage(rootURL: libraryRootURL).matches(space) else {
+        guard try FramebaseLibraryPackage(rootURL: libraryRootURL).matches(space) else {
             throw OriginalReceiveError.librarySpaceMismatch(existing: nil, requested: space)
         }
         try await catalog.assignLibrarySpace(space)
