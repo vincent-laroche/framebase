@@ -11,10 +11,10 @@ struct ScreenshotContentIdentityTests {
         let temporary = try TemporaryCatalog()
         let hash = String(repeating: "ab", count: 32)
         #expect(FramebaseCatalogFoundation.currentSchemaVersion == 14)
-        let schemaVersion = try temporary.database.databasePool.read { db in
+        let schemaVersion = try await temporary.database.databasePool.read { db in
             try String.fetchOne(db, sql: "SELECT value FROM catalog_settings WHERE key = 'schema_version'")
         }
-        let migrationCount = try temporary.database.databasePool.read { db in
+        let migrationCount = try await temporary.database.databasePool.read { db in
             try Int.fetchOne(
                 db,
                 sql: "SELECT COUNT(*) FROM grdb_migrations WHERE identifier = ?",
