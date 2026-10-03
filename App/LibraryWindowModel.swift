@@ -1,4 +1,5 @@
 import AppKit
+import FramebaseCatalog
 import FramebaseDomain
 import FramebaseMedia
 import Foundation
@@ -152,7 +153,8 @@ final class LibraryWindowModel {
     var selectedDuplicateCandidate: DuplicateCandidate?
     var selectedTrashReceipts: [AssetTrashReceipt] = []
     var savedSearches: [SavedSearch] = []
-    var hairSolutionsTemplatePreview: LibraryTemplateApplicationPreview?
+    var libraryTemplatePreview: LibraryTemplateApplicationPreview?
+    var libraryTemplateTitle = LibrarySpace.personal.templateActionTitle
     var workflowTagPreview: WorkflowTagPreview?
     var workflowTagFailureMessage: String?
     var workflowTagUndo: WorkflowTagUndo?
@@ -720,27 +722,34 @@ final class LibraryWindowModel {
         }
     }
 
-    func prepareHairSolutionsTemplateApplication() async {
+    var activeLibraryTemplateActionTitle: String {
+        container.activeLibrary?.space.templateActionTitle ?? LibrarySpace.personal.templateActionTitle
+    }
+
+    func prepareActiveLibraryTemplate() async {
         guard !container.cloudBackingIsActive, let catalog = container.catalogDatabase else { return }
+        let space = container.activeLibrary?.space ?? .personal
         do {
-            hairSolutionsTemplatePreview = try await catalog.previewHairSolutionsLibraryTemplate()
+            libraryTemplateTitle = space.templateActionTitle
+            libraryTemplatePreview = try await catalog.previewLibraryTemplate(for: space)
         } catch {
-            statusMessage = error.localizedDescription
+            statusMessage = (error as? CatalogError)?.libraryMessage ?? error.localizedDescription
         }
     }
 
-    func dismissHairSolutionsTemplatePreview() {
-        hairSolutionsTemplatePreview = nil
+    func dismissLibraryTemplatePreview() {
+        libraryTemplatePreview = nil
     }
 
-    func applyHairSolutionsTemplate() async {
+    func applyActiveLibraryTemplate() async {
         guard !container.cloudBackingIsActive, let catalog = container.catalogDatabase else { return }
+        let space = container.activeLibrary?.space ?? .personal
         do {
-            let receipt = try await catalog.applyHairSolutionsLibraryTemplate()
-            hairSolutionsTemplatePreview = nil
-            statusMessage = "Added \(receipt.createdFolderIDs.count) template folders and \(receipt.createdTagIDs.count) tags. On-first-use folders were left empty."
+            let receipt = try await catalog.applyLibraryTemplate(for: space)
+            libraryTemplatePreview = nil
+            statusMessage = "Added \(receipt.createdFolderIDs.count) template folders and \(receipt.createdTagIDs.count) tags. No assets or original files moved."
         } catch {
-            statusMessage = error.localizedDescription
+            statusMessage = (error as? CatalogError)?.libraryMessage ?? error.localizedDescription
         }
     }
 
@@ -1039,7 +1048,7 @@ final class LibraryWindowModel {
         selectionAnchorID = nil
         keyboardFocusedAssetID = nil
         pendingFolderDeletion = nil
-        hairSolutionsTemplatePreview = nil
+        libraryTemplatePreview = nil
         workflowTagPreview = nil
         workflowTagFailureMessage = nil
         workflowTagUndo = nil

@@ -84,18 +84,17 @@ struct LibraryWindowView: View {
                         } label: {
                             Label(
                                 library.displayName,
-                                systemImage: library.catalogID == model.container.activeLibrary?.catalogID ? "checkmark.circle.fill" : "photo.on.rectangle"
+                                systemImage: library.catalogID == model.container.activeLibrary?.catalogID ? "checkmark.circle.fill" : library.space.symbolName
                             )
                         }
                         .disabled(library.catalogID == model.container.activeLibrary?.catalogID)
                     }
                     Divider()
-                    Button("Create HSC Library") {
-                        Task { await model.container.createLibrary(for: .hairSolutions) }
-                    }
-                    if !model.container.knownLibraries.contains(where: { $0.space == .personal }) {
-                        Button("Create Personal Library") {
-                            Task { await model.container.createLibrary(for: .personal) }
+                    ForEach(LibrarySpace.allCases, id: \.self) { space in
+                        if !model.container.knownLibraries.contains(where: { $0.space == space }) {
+                            Button("Create \(space.displayName)") {
+                                Task { await model.container.createLibrary(for: space) }
+                            }
                         }
                     }
                 } label: {
@@ -246,8 +245,8 @@ struct LibraryWindowView: View {
                 .disabled(model.selectedAssetIDs.isEmpty)
 
                 Menu {
-                    Button("Apply Hair Solutions Template") {
-                        Task { await model.prepareHairSolutionsTemplateApplication() }
+                    Button(model.activeLibraryTemplateActionTitle) {
+                        Task { await model.prepareActiveLibraryTemplate() }
                     }
                 } label: {
                     Label("Library", systemImage: "folder.badge.gearshape")
@@ -321,13 +320,14 @@ struct LibraryWindowView: View {
                 Text(deletionMessage(for: prompt))
             }
         }
-        .sheet(item: hairSolutionsTemplatePreviewBinding) { preview in
-            HairSolutionsTemplateReviewSheet(
+        .sheet(item: libraryTemplatePreviewBinding) { preview in
+            LibraryTemplateReviewSheet(
+                title: model.libraryTemplateTitle,
                 preview: preview,
                 apply: {
-                    Task { await model.applyHairSolutionsTemplate() }
+                    Task { await model.applyActiveLibraryTemplate() }
                 },
-                cancel: model.dismissHairSolutionsTemplatePreview
+                cancel: model.dismissLibraryTemplatePreview
             )
         }
         .sheet(isPresented: $isSaveSearchPresented) {
@@ -439,12 +439,12 @@ struct LibraryWindowView: View {
         )
     }
 
-    private var hairSolutionsTemplatePreviewBinding: Binding<LibraryTemplateApplicationPreview?> {
+    private var libraryTemplatePreviewBinding: Binding<LibraryTemplateApplicationPreview?> {
         Binding(
-            get: { model.hairSolutionsTemplatePreview },
+            get: { model.libraryTemplatePreview },
             set: { preview in
                 if preview == nil {
-                    model.dismissHairSolutionsTemplatePreview()
+                    model.dismissLibraryTemplatePreview()
                 }
             }
         )
@@ -666,14 +666,15 @@ private struct WorkflowTagReviewSheet: View {
     }
 }
 
-private struct HairSolutionsTemplateReviewSheet: View {
+private struct LibraryTemplateReviewSheet: View {
+    let title: String
     let preview: LibraryTemplateApplicationPreview
     let apply: () -> Void
     let cancel: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Apply Hair Solutions Template")
+            Text(title)
                 .font(.title2.weight(.semibold))
             Text(summary)
                 .foregroundStyle(.secondary)

@@ -40,11 +40,13 @@ public struct LibraryTagNamespaceTemplate: Hashable, Sendable {
     }
 }
 
-/// The stable folder and cross-cutting-tag vocabulary supplied for the Hair
-/// Solutions asset library. Folder names capture durable facts; mutable review
-/// state belongs in `status:*` tags instead.
-public enum HairSolutionsLibraryTemplate {
+/// The stable folder and cross-cutting-tag vocabulary for the Hair Solutions
+/// library space only. Folder names capture durable facts; mutable review
+/// state belongs in `status:*` tags. Personal and Screenshots use their own
+/// templates and must not receive this product tree.
+public enum HairSolutionsLibraryTemplate: LibraryStarterTemplate {
     public static let name = "Hair Solutions library"
+    public static let space = LibrarySpace.hairSolutions
 
     public static let folders: [LibraryFolderTemplate] = [
         initial("00_inbox"),
@@ -110,27 +112,6 @@ public enum HairSolutionsLibraryTemplate {
         "article:how-to-apply-tape",
         "campaign:2026-09-relaunch"
     ]
-
-    public static var initialFolders: [LibraryFolderTemplate] {
-        folders.filter { $0.provisioning == .initial }
-    }
-
-    public static func tagNamespace(named namespace: String) -> LibraryTagNamespaceTemplate? {
-        tagNamespaces.first { $0.namespace == namespace }
-    }
-
-    public static func validates(_ tagName: TagName) -> Bool {
-        guard let template = tagNamespace(named: tagName.namespace) else { return true }
-        return template.allowsCustomValues || template.allowedValues.contains(tagName.value)
-    }
-
-    public static func initialTagNames() throws -> [TagName] {
-        let controlled = try tagNamespaces.flatMap { namespace in
-            try namespace.allowedValues.map { try TagName(namespace: namespace.namespace, value: $0) }
-        }
-        let explicit = try initialCustomTagRawValues.map(TagName.init)
-        return (controlled + explicit).sorted { $0.rawValue < $1.rawValue }
-    }
 
     private static func initial(_ path: String) -> LibraryFolderTemplate {
         LibraryFolderTemplate(path: path.split(separator: "/").map(String.init), provisioning: .initial)

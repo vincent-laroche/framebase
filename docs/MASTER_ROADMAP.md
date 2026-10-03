@@ -75,13 +75,14 @@ Commercial multi-tenancy, social sharing, and a consumer mobile application are 
 
 ### Library-space isolation
 
-Vincent's Personal Library and Hair Solutions Co. Library are distinct Framebase
-library spaces, not folders, albums, tags, or views of one catalog. Each has an
-independent catalog ID, immutable-original store, local sync/outbox state,
-credentials, workflow/audit evidence, and eventual private cloud resources.
-Framebase must not search, organize, analyze, upload, or grant agent access
-across library spaces. See `docs/phases/PHASE_9_LIBRARY_SPACES.md` for the
-active local and cloud-separation implementation plan.
+Vincent's Personal Library, the Hair Solutions Co. Library, and the Screenshots
+Library are distinct Framebase library spaces, not folders, albums, tags, or
+views of one catalog. Each has an independent catalog ID, immutable-original
+store, local sync/outbox state, credentials, workflow/audit evidence, and
+eventual private cloud resources. Framebase must not search, organize, analyze,
+upload, or grant agent access across library spaces. See
+`docs/phases/PHASE_9_LIBRARY_SPACES.md` for the active local and
+cloud-separation implementation plan.
 
 ## Current baseline — local and development slices verified on 2026-08-21
 The original Phase 1 native foundation remains implemented locally and is still the primary usable client. The repository now also contains verified local or development-only slices for the later contracts; these do not imply that the complete product or production gates are finished.
@@ -93,7 +94,7 @@ The original Phase 1 native foundation remains implemented locally and is still 
 | Finder integration | File Provider IDs, snapshots, materialization, catalog bridge, and tests | Native extension, signing, App Group, and Finder lifecycle gate remain open. |
 | Intelligence | Local Apple Vision OCR/barcode/document analysis, provenance, and review controls | Cloud provider calls, embeddings, and semantic search remain gated. |
 | Workflows and agents | Local proposal/approval/audit/undo spine, OpenAPI/CLI contracts, local agent attribution, and fixtures | Cloud Queues/Workflows, remote MCP hosting, and production identity remain unshipped. |
-| Library spaces | Separate local Personal and HSC registry/isolation proof | Separate production cloud targets and operational hardening remain planned. |
+| Library spaces | Separate local Personal, HSC, and Screenshots registry/isolation proof, with nested folders, albums, and `namespace:value` tags | Separate production cloud targets and operational hardening remain planned. |
 
 The live development Worker is fixture-oriented and remains separate from the native app’s personal library. No production deployment, personal-media upload, native File Provider extension, cloud AI provider call, remote MCP host, or permanent purge capability is implied by this baseline.
 

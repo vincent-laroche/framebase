@@ -41,6 +41,19 @@ public enum CatalogError: Error, Equatable, Sendable {
     case incompleteRestore
     case tagNotFound(TagID)
     case savedSearchNotFound(SavedSearchID)
+    case librarySpaceConflict(existing: LibrarySpace, requested: LibrarySpace)
+    case libraryTemplateSpaceMismatch(catalog: LibrarySpace, template: LibrarySpace)
+
+    public var libraryMessage: String? {
+        switch self {
+        case let .librarySpaceConflict(existing, requested):
+            "This catalog is \(existing.displayName) and cannot become \(requested.displayName)."
+        case let .libraryTemplateSpaceMismatch(catalog, template):
+            "The \(template.displayName) template cannot be applied to \(catalog.displayName)."
+        default:
+            nil
+        }
+    }
 }
 
 /// The persistence boundary for one Framebase catalog.
@@ -217,119 +230,173 @@ public final class CatalogDatabase: Sendable {
         }
     }
 
-    /// Applies the starter template's logical folders and controlled tag
-    /// values. It never moves assets, changes original bytes, or storage keys.
-    public func previewHairSolutionsLibraryTemplate() async throws -> LibraryTemplateApplicationPreview {
+    public func librarySpace() async throws -> LibrarySpace? {
         try await databasePool.read { db in
-            var foldersByPath: [String: FolderID] = [:]
-            var folderPathsToCreate: [String] = []
-            for definition in HairSolutionsLibraryTemplate.initialFolders {
-                guard let name = definition.path.last else { continue }
-                let path = definition.path.joined(separator: "/")
-                let parentPath = definition.path.dropLast().joined(separator: "/")
-                let parentID = parentPath.isEmpty ? nil : foldersByPath[parentPath]
-                let existingID: String?
-                if let parentID {
-                    existingID = try String.fetchOne(
-                        db,
-                        sql: "SELECT id FROM folders WHERE parent_folder_id = ? AND name = ? COLLATE NOCASE",
-                        arguments: [parentID.description, name]
-                    )
-                } else {
-                    existingID = try String.fetchOne(
-                        db,
-                        sql: "SELECT id FROM folders WHERE parent_folder_id IS NULL AND name = ? COLLATE NOCASE",
-                        arguments: [name]
-                    )
-                }
-                if let existingID, let uuid = UUID(uuidString: existingID) {
-                    foldersByPath[path] = FolderID(rawValue: uuid)
-                } else {
-                    folderPathsToCreate.append(path)
-                }
-            }
+            try Self.storedLibrarySpace(in: db)
+        }
+    }
 
-            let tagNamesToCreate = try HairSolutionsLibraryTemplate.initialTagNames().filter { name in
-                !(try Bool.fetchOne(
-                    db,
-                    sql: "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE)",
-                    arguments: [name.rawValue]
-                ) ?? false)
+    /// Records the catalog's library space once. A later request for a different
+    /// space fails closed so Personal, Hair Solutions, and Screenshots cannot
+    /// retarget one catalog.
+    public func assignLibrarySpace(_ space: LibrarySpace) async throws {
+        try await databasePool.write { db in
+            if let existing = try Self.storedLibrarySpace(in: db) {
+                guard existing == space else {
+                    throw CatalogError.librarySpaceConflict(existing: existing, requested: space)
+                }
+                return
             }
-
-            return LibraryTemplateApplicationPreview(
-                folderPathsToCreate: folderPathsToCreate,
-                tagNamesToCreate: tagNamesToCreate,
-                onFirstUseFolderPaths: HairSolutionsLibraryTemplate.folders
-                    .filter { $0.provisioning == .onFirstUse }
-                    .map { $0.path.joined(separator: "/") }
+            try db.execute(
+                sql: """
+                    INSERT INTO catalog_settings (key, value, updated_at_ms)
+                    VALUES ('library_space', ?, ?)
+                    """,
+                arguments: [space.rawValue, CatalogDate.milliseconds(Date())]
             )
         }
     }
 
-    public func applyHairSolutionsLibraryTemplate() async throws -> LibraryTemplateApplicationReceipt {
-        try await databasePool.write { db in
-            let now = Date()
-            let milliseconds = CatalogDate.milliseconds(now)
-            var foldersByPath: [String: FolderID] = [:]
-            var createdFolderIDs: [FolderID] = []
-            for definition in HairSolutionsLibraryTemplate.initialFolders {
-                guard let name = definition.path.last else { continue }
-                let parentPath = definition.path.dropLast().joined(separator: "/")
-                let parentID = parentPath.isEmpty ? nil : foldersByPath[parentPath]
-                if !parentPath.isEmpty, parentID == nil {
-                    throw CatalogError.invalidPersistedValue("template_parent_path")
-                }
-                let existingID: String?
-                if let parentID {
-                    existingID = try String.fetchOne(
-                        db,
-                        sql: "SELECT id FROM folders WHERE parent_folder_id = ? AND name = ? COLLATE NOCASE",
-                        arguments: [parentID.description, name]
-                    )
-                } else {
-                    existingID = try String.fetchOne(
-                        db,
-                        sql: "SELECT id FROM folders WHERE parent_folder_id IS NULL AND name = ? COLLATE NOCASE",
-                        arguments: [name]
-                    )
-                }
-                if let existingID, let uuid = UUID(uuidString: existingID) {
-                    foldersByPath[definition.path.joined(separator: "/")] = FolderID(rawValue: uuid)
-                    continue
-                }
-                let predicate = parentID == nil ? "parent_folder_id IS NULL" : "parent_folder_id = ?"
-                let arguments: StatementArguments = parentID == nil ? [] : [parentID!.description]
-                let folder = Folder(
-                    id: FolderID(),
-                    name: try FolderName(name),
-                    parentFolderID: parentID,
-                    createdAt: now,
-                    updatedAt: now,
-                    sortOrder: try CatalogSortOrder.next(in: db, table: "folders", predicateSQL: predicate, arguments: arguments)
-                )
-                try FolderRecord(folder: folder).insert(db)
-                foldersByPath[definition.path.joined(separator: "/")] = folder.id
-                createdFolderIDs.append(folder.id)
-            }
-
-            var createdTagIDs: [TagID] = []
-            for name in try HairSolutionsLibraryTemplate.initialTagNames() {
-                let exists = try Bool.fetchOne(
-                    db,
-                    sql: "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE)",
-                    arguments: [name.rawValue]
-                ) ?? false
-                guard !exists else { continue }
-                let tag = Tag(name: name, createdAt: now, updatedAt: now)
-                try db.execute(
-                    sql: "INSERT INTO tags (id, namespace, value, name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?)",
-                    arguments: [tag.id.description, name.namespace, name.value, name.rawValue, milliseconds, milliseconds]
-                )
-                createdTagIDs.append(tag.id)
-            }
-            return LibraryTemplateApplicationReceipt(createdFolderIDs: createdFolderIDs, createdTagIDs: createdTagIDs)
+    /// Creates the space's logical folders and controlled tags. It never moves
+    /// assets, changes original bytes, or changes immutable storage keys.
+    /// An unscoped catalog may receive one template; a scoped catalog accepts
+    /// only its own space.
+    public func previewLibraryTemplate(for space: LibrarySpace) async throws -> LibraryTemplateApplicationPreview {
+        try await databasePool.read { db in
+            try Self.requireTemplateSpace(space, in: db)
+            return try Self.previewTemplate(space, in: db)
         }
+    }
+
+    public func applyLibraryTemplate(for space: LibrarySpace) async throws -> LibraryTemplateApplicationReceipt {
+        try await databasePool.write { db in
+            try Self.requireTemplateSpace(space, in: db)
+            return try Self.applyTemplate(space, in: db)
+        }
+    }
+
+    public func previewHairSolutionsLibraryTemplate() async throws -> LibraryTemplateApplicationPreview {
+        try await previewLibraryTemplate(for: .hairSolutions)
+    }
+
+    public func applyHairSolutionsLibraryTemplate() async throws -> LibraryTemplateApplicationReceipt {
+        try await applyLibraryTemplate(for: .hairSolutions)
+    }
+
+    static func storedLibrarySpace(in db: Database) throws -> LibrarySpace? {
+        guard let raw = try String.fetchOne(
+            db,
+            sql: "SELECT value FROM catalog_settings WHERE key = 'library_space'"
+        ) else {
+            return nil
+        }
+        guard let space = LibrarySpace(rawValue: raw) else {
+            throw CatalogError.invalidPersistedValue("library_space")
+        }
+        return space
+    }
+
+    private static func requireTemplateSpace(_ space: LibrarySpace, in db: Database) throws {
+        if let recorded = try storedLibrarySpace(in: db), recorded != space {
+            throw CatalogError.libraryTemplateSpaceMismatch(catalog: recorded, template: space)
+        }
+    }
+
+    private static func previewTemplate(_ space: LibrarySpace, in db: Database) throws -> LibraryTemplateApplicationPreview {
+        var foldersByPath: [String: FolderID] = [:]
+        var folderPathsToCreate: [String] = []
+        for definition in space.initialFolders {
+            guard let name = definition.path.last else { continue }
+            let path = definition.path.joined(separator: "/")
+            let parentPath = definition.path.dropLast().joined(separator: "/")
+            let parentID = parentPath.isEmpty ? nil : foldersByPath[parentPath]
+            let existingID = try existingFolderID(named: name, parentID: parentID, in: db)
+            if let existingID, let uuid = UUID(uuidString: existingID) {
+                foldersByPath[path] = FolderID(rawValue: uuid)
+            } else {
+                folderPathsToCreate.append(path)
+            }
+        }
+
+        let tagNamesToCreate = try space.initialTagNames().filter { name in
+            !(try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE)",
+                arguments: [name.rawValue]
+            ) ?? false)
+        }
+
+        return LibraryTemplateApplicationPreview(
+            folderPathsToCreate: folderPathsToCreate,
+            tagNamesToCreate: tagNamesToCreate,
+            onFirstUseFolderPaths: space.onFirstUseFolderPaths
+        )
+    }
+
+    private static func applyTemplate(_ space: LibrarySpace, in db: Database) throws -> LibraryTemplateApplicationReceipt {
+        let now = Date()
+        let milliseconds = CatalogDate.milliseconds(now)
+        var foldersByPath: [String: FolderID] = [:]
+        var createdFolderIDs: [FolderID] = []
+        for definition in space.initialFolders {
+            guard let name = definition.path.last else { continue }
+            let parentPath = definition.path.dropLast().joined(separator: "/")
+            let parentID = parentPath.isEmpty ? nil : foldersByPath[parentPath]
+            if !parentPath.isEmpty, parentID == nil {
+                throw CatalogError.invalidPersistedValue("template_parent_path")
+            }
+            let path = definition.path.joined(separator: "/")
+            if let existingID = try existingFolderID(named: name, parentID: parentID, in: db),
+               let uuid = UUID(uuidString: existingID) {
+                foldersByPath[path] = FolderID(rawValue: uuid)
+                continue
+            }
+            let predicate = parentID == nil ? "parent_folder_id IS NULL" : "parent_folder_id = ?"
+            let arguments: StatementArguments = parentID == nil ? [] : [parentID!.description]
+            let folder = Folder(
+                id: FolderID(),
+                name: try FolderName(name),
+                parentFolderID: parentID,
+                createdAt: now,
+                updatedAt: now,
+                sortOrder: try CatalogSortOrder.next(in: db, table: "folders", predicateSQL: predicate, arguments: arguments)
+            )
+            try FolderRecord(folder: folder).insert(db)
+            foldersByPath[path] = folder.id
+            createdFolderIDs.append(folder.id)
+        }
+
+        var createdTagIDs: [TagID] = []
+        for name in try space.initialTagNames() {
+            let exists = try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE)",
+                arguments: [name.rawValue]
+            ) ?? false
+            guard !exists else { continue }
+            let tag = Tag(name: name, createdAt: now, updatedAt: now)
+            try db.execute(
+                sql: "INSERT INTO tags (id, namespace, value, name, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?)",
+                arguments: [tag.id.description, name.namespace, name.value, name.rawValue, milliseconds, milliseconds]
+            )
+            createdTagIDs.append(tag.id)
+        }
+        return LibraryTemplateApplicationReceipt(createdFolderIDs: createdFolderIDs, createdTagIDs: createdTagIDs)
+    }
+
+    private static func existingFolderID(named name: String, parentID: FolderID?, in db: Database) throws -> String? {
+        if let parentID {
+            return try String.fetchOne(
+                db,
+                sql: "SELECT id FROM folders WHERE parent_folder_id = ? AND name = ? COLLATE NOCASE",
+                arguments: [parentID.description, name]
+            )
+        }
+        return try String.fetchOne(
+            db,
+            sql: "SELECT id FROM folders WHERE parent_folder_id IS NULL AND name = ? COLLATE NOCASE",
+            arguments: [name]
+        )
     }
 
     static func makeMigrator() -> DatabaseMigrator {
