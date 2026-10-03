@@ -158,7 +158,13 @@ public actor ScreenshotIntake {
         let hash = try Self.contentHash(of: sourceURL)
         guard hash.byteCount > 0 else { throw ScreenshotIntakeError.unreadableImage(filename) }
 
-        if let assetID = seenHashes[hash.digest] ?? (try await catalog.assetID(forContentSHA256: hash.digest)) {
+        let existingID: AssetID?
+        if let cached = seenHashes[hash.digest] {
+            existingID = cached
+        } else {
+            existingID = try await catalog.assetID(forContentSHA256: hash.digest)
+        }
+        if let assetID = existingID {
             seenHashes[hash.digest] = assetID
             guard let asset = try await catalog.asset(id: assetID) else {
                 throw ScreenshotIntakeError.unreadableImage(filename)
