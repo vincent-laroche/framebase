@@ -69,6 +69,8 @@ struct FramebaseCLITests {
         #expect(help.contains("ingest-screenshots"))
         #expect(help.contains("receive-originals"))
         #expect(help.contains("framebase-blobs-dev"))
+        #expect(help.contains("framebase-api-dev.notionsync.workers.dev"))
+        #expect(help.contains("00_inbox"))
     }
 
     @Test("CLI tag proposal stays dry until its exact opaque approval is applied")

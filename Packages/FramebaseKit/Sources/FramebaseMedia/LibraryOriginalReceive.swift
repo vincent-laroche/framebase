@@ -128,6 +128,7 @@ public actor LibraryOriginalReceive {
 
     private func importNew(sourceURL: URL, hash: ContentHash, mediaType: String) async throws -> LocalOriginalReceipt {
         let filename = sourceURL.lastPathComponent
+        let parentFolderID = try await destinationFolderID(for: sourceURL)
         let assetID = AssetID()
         let staged: StagedBlob
         do {
@@ -167,7 +168,7 @@ public actor LibraryOriginalReceive {
             id: assetID,
             filename: filename,
             displayName: displayName,
-            parentFolderID: catalog.inboxFolderID,
+            parentFolderID: parentFolderID,
             storageKey: committed.storageKey,
             localURL: committed.localURL,
             width: extracted.width,
@@ -209,6 +210,20 @@ public actor LibraryOriginalReceive {
         } catch {
             try? await blobStore.removeNewlyCommitted(committed)
             throw error
+        }
+    }
+
+    private func destinationFolderID(for sourceURL: URL) async throws -> FolderID {
+        switch space {
+        case .personal:
+            guard let year = OriginalReceivePlacement.personalYearName(in: sourceURL) else {
+                throw OriginalReceiveError.missingSourceYear(sourceURL.lastPathComponent)
+            }
+            return try await catalog.ensureRootFolder(named: year)
+        case .hairSolutions:
+            return try await catalog.ensureRootFolder(named: OriginalReceivePlacement.hairSolutionsInboxName)
+        case .screenshots:
+            return catalog.inboxFolderID
         }
     }
 

@@ -20,10 +20,16 @@ Local copy only, leaving every source file in place:
 framebase receive-originals \
   --library "$HOME/Pictures/Personal Library.framebase" \
   --space personal \
-  /path/to/one-photo-or-directory
+  /path/to/personal/2014
 ```
 
-The same bytes under another name, or on a later run, stay one asset in that library's Inbox. Identity is the SHA-256 of the original file. The command does not run OCR or any model API.
+Identity is the SHA-256 of the original file. The same bytes under another name, or on a later run, stay one asset. The command does not run OCR or any model API.
+
+Personal originals are filed in a root folder named from the source path. The name is the nearest parent directory whose name is a year from 2010 through 2026, such as `personal/2014/album/photo.jpg` landing in `2014`. The command creates that folder when it is missing. It does not read EXIF to choose the year, and a directory name that merely contains a year, such as `iPhoto export 2010-2026`, is not a year folder. A Personal file with no year directory is refused.
+
+Hair Solutions originals go in `00_inbox`. The command creates that folder when it is missing and does not create year folders for that library. Screenshots stay in the Screenshots Inbox.
+
+Pass only the `personal/` and `business/` trees. Do not pass private quarantine or noise folders. The command copies the paths it is given.
 
 To also store those bytes in the development bucket, add the dev Worker URL and a device token that already has `assets.import`:
 
@@ -33,10 +39,19 @@ framebase receive-originals \
   --space personal \
   --api https://framebase-api-dev.notionsync.workers.dev \
   --token "$FRAMEBASE_DEV_TOKEN" \
-  /path/to/one-photo-or-directory
+  /path/to/personal/2014
 ```
 
-Point the same command at a directory when a later bulk import is approved. Do not point it at the iPhoto export until that separate run. Do not pass a production URL. The command refuses `framebase-api-prod`, `framebase-blobs-prod`, `framebase-catalog-prod`, and `hsc-media-origin`.
+Hair Solutions uses the same command with `--space hairSolutions` and the business path. Those originals land in `00_inbox`:
+
+```sh
+framebase receive-originals \
+  --library "$HOME/Pictures/HSC Library.framebase" \
+  --space hairSolutions \
+  /path/to/business
+```
+
+Point the same command at `personal/` or `business/` when a later bulk import is approved. This document does not run that import. The documented API default is the development Worker above. `https://framebase-api-prod.notionsync.workers.dev` is accepted only when the caller passes that exact `--api` value. The command refuses `hsc-media-origin`, `framebase-blobs-prod`, `framebase-catalog-prod`, and any other `framebase-api-prod` host.
 
 JSON reports the library space, filename, asset id, `imported` or `alreadyPresent`, and whether the blob was `uploaded`, `alreadyInR2`, or `localOnly`. It does not include storage keys, managed-original paths, or presigned URLs.
 
@@ -50,7 +65,7 @@ For an original at or under 5 GiB:
 2. If the response is `already_verified`, stop. The same bytes are already in the bucket.
 3. Otherwise `PUT` the file to the returned `https://<account>.r2.cloudflarestorage.com/framebase-blobs-dev/blobs/sha256/<2 hex>/<hash>.<ext>` URL. Send the signed `Content-Type`. Do not send the file to the Worker.
 4. `POST /v1/blobs/upload-complete` with only `sha256` and `byteSize`. The Worker streams the object from R2 and checks the SHA-256. It does not buffer the object.
-5. `POST /v1/mutations` with `Idempotency-Key: receive-asset-<asset id>` and one `create_asset` whose `blobId` is the SHA-256, `folderId` is `system-inbox`, and `assetMetadata.librarySpace` is `personal`, `hairSolutions`, or `screenshots`. Replaying that key does not insert a second asset.
+5. `POST /v1/mutations` with `Idempotency-Key: receive-asset-<asset id>` and one `create_asset` whose `blobId` is the SHA-256, `folderId` is `system-inbox`, and `assetMetadata.librarySpace` is `personal`, `hairSolutions`, or `screenshots`. Replaying that key does not insert a second asset. The year folder and `00_inbox` are the local library placement. The remote row stays in `system-inbox` and records the library space.
 
 For an original larger than 5 GiB and at or under 5 TiB, use multipart. Parts are 8 MiB. Each part is a presigned `UploadPart` against the same bucket:
 

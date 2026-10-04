@@ -72,8 +72,11 @@ public enum FramebaseCLI {
     `ingest-screenshots` copies new files into the Screenshots library only,
     stores local Apple Vision OCR text, and leaves the dropped files in place.
     The same screenshot bytes are never imported twice.
-    `receive-originals` copies image originals into the library named by --space
-    and can store those bytes directly in the development bucket framebase-blobs-dev.
+    `receive-originals` copies image originals into the library named by --space.
+    Personal originals go in the source year folder (2010 through 2026). Hair Solutions
+    originals go in 00_inbox. The documented API is the development Worker. Passing
+    --api https://framebase-api-prod.notionsync.workers.dev is accepted only for that
+    URL. hsc-media-origin is refused. Bytes go directly to framebase-blobs-dev.
     The same original bytes are never imported or uploaded twice. Source files stay in place.
     """
 
