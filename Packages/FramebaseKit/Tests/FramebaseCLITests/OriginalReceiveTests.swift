@@ -131,8 +131,10 @@ struct OriginalReceiveTests {
         let folder2026 = try #require(folders.first { $0.name.rawValue == "2026" && $0.parentFolderID == nil })
         #expect(folders.filter { $0.name.rawValue == "2010" }.count == 1)
         #expect(!folders.contains { $0.name.rawValue.contains("iPhoto") })
-        let firstID = try #require(UUID(uuidString: try #require(report.items.first { $0.filename == "early.png" }?.assetID))).mapToAssetID()
-        let secondID = try #require(UUID(uuidString: try #require(report.items.first { $0.filename == "late.png" }?.assetID))).mapToAssetID()
+        let earlyAssetID = try #require(report.items.first { $0.filename == "early.png" }?.assetID)
+        let lateAssetID = try #require(report.items.first { $0.filename == "late.png" }?.assetID)
+        let firstID = try #require(UUID(uuidString: earlyAssetID)).mapToAssetID()
+        let secondID = try #require(UUID(uuidString: lateAssetID)).mapToAssetID()
         #expect(try await catalog.assets.asset(id: firstID)?.parentFolderID == folder2010.id)
         #expect(try await catalog.assets.asset(id: secondID)?.parentFolderID == folder2026.id)
 
@@ -165,7 +167,8 @@ struct OriginalReceiveTests {
         let inbox = try #require(folders.first { $0.name.rawValue == "00_inbox" && $0.parentFolderID == nil })
         #expect(folders.filter { $0.name.rawValue == "00_inbox" }.count == 1)
         #expect(!folders.contains { $0.name.rawValue == "2019" })
-        let assetID = try #require(UUID(uuidString: try #require(report.items.first?.assetID))).mapToAssetID()
+        let rawAssetID = try #require(report.items.first?.assetID)
+        let assetID = try #require(UUID(uuidString: rawAssetID)).mapToAssetID()
         #expect(try await catalog.assets.asset(id: assetID)?.parentFolderID == inbox.id)
         #expect(try await catalog.assets.asset(id: assetID)?.parentFolderID != catalog.inboxID)
     }
