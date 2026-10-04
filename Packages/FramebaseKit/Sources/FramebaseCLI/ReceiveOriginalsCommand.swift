@@ -14,6 +14,18 @@ extension FramebaseCLI {
         guard let libraryPath else { throw FramebaseCLIError.missingLibraryPath }
         guard let spaceName, let space = LibrarySpace(rawValue: spaceName) else { throw FramebaseCLIError.missingLibrarySpace }
         guard !values.isEmpty else { throw FramebaseCLIError.missingReceiveSource }
+        if let api {
+            guard let url = URL(string: api), url.host != nil else { throw FramebaseCLIError.unexpectedArgument("--api") }
+            try OriginalReceiveAPIPolicy.validate(url)
+        }
+        switch (api, token) {
+        case (nil, nil):
+            break
+        case let (api?, token?) where !token.isEmpty && !api.isEmpty:
+            break
+        default:
+            throw OriginalReceiveError.cloudCredentialsIncomplete
+        }
         let sources = values.map { URL(fileURLWithPath: $0) }
 
         let package = try FramebaseLibraryPackage(rootURL: URL(fileURLWithPath: libraryPath, isDirectory: true))
@@ -75,14 +87,8 @@ extension FramebaseCLI {
         case (nil, nil):
             return nil
         case let (api?, token?) where !token.isEmpty:
-            guard let url = URL(string: api) else { throw FramebaseCLIError.unexpectedArgument("--api") }
-            let lowered = url.absoluteString.lowercased()
-            if lowered.contains("framebase-api-prod")
-                || lowered.contains("framebase-blobs-prod")
-                || lowered.contains("framebase-catalog-prod")
-                || lowered.contains("hsc-media-origin") {
-                throw OriginalReceiveError.productionTargetRefused
-            }
+            guard let url = URL(string: api), url.host != nil else { throw FramebaseCLIError.unexpectedArgument("--api") }
+            try OriginalReceiveAPIPolicy.validate(url)
             let session = DeviceSession(
                 deviceID: "receive-originals",
                 token: token,

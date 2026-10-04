@@ -32,6 +32,17 @@ extension CatalogDatabase: ScreenshotIntakeCatalog, OriginalReceiveCatalog {
 
     /// Inserts the asset and its original-byte SHA-256 in one write.
     /// A second insert of the same bytes rolls back and reports a duplicate.
+    public func ensureRootFolder(named name: String) async throws -> FolderID {
+        let folderName = try FolderName(name)
+        let snapshot = try await folders.treeSnapshot()
+        if let existing = snapshot.folders.first(where: {
+            $0.parentFolderID == nil && $0.name.rawValue.compare(folderName.rawValue, options: .caseInsensitive) == .orderedSame
+        }) {
+            return existing.id
+        }
+        return try await folders.createFolder(named: folderName, in: nil).id
+    }
+
     public func insertOriginal(_ asset: Asset, contentSHA256: String) async throws {
         let hash = try Self.normalizedContentSHA256(contentSHA256)
         guard asset.fileSize > 0 else {
